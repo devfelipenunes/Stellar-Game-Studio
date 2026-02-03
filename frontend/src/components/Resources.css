@@ -12,14 +12,14 @@
 }
 
 .sidebar-content {
-  background: rgba(255, 255, 255, 0.92);
+  background: rgba(255, 255, 255, 0.95);
   border: 1px solid var(--color-border);
-  border-radius: 24px;
+  border-radius: var(--radius-lg);
   padding: 1.5rem;
   display: flex;
   flex-direction: column;
   gap: 1.25rem;
-  box-shadow: 0 22px 38px rgba(28, 27, 25, 0.08);
+  box-shadow: var(--shadow-soft);
 }
 
 .sidebar-title {
@@ -27,6 +27,7 @@
   letter-spacing: 0.18em;
   text-transform: uppercase;
   color: var(--color-ink-muted);
+  font-family: var(--font-display);
 }
 
 .sidebar-nav {
@@ -42,9 +43,9 @@
 }
 
 .nav-item {
-  border-radius: 14px;
+  border-radius: var(--radius-sm);
   border: 1px solid var(--color-border);
-  background: rgba(255, 255, 255, 0.85);
+  background: rgba(255, 255, 255, 0.92);
   color: var(--color-ink);
   font-size: 0.85rem;
   font-weight: 600;
@@ -60,9 +61,9 @@
 
 .nav-item.back {
   justify-content: center;
-  background: rgba(27, 142, 165, 0.15);
-  border-color: rgba(27, 142, 165, 0.35);
-  color: var(--color-accent-strong);
+  background: rgba(253, 218, 36, 0.25);
+  border-color: rgba(253, 218, 36, 0.6);
+  color: var(--color-ink);
 }
 
 .nav-item.external {
@@ -71,13 +72,13 @@
 
 .nav-item:hover {
   transform: translateY(-1px);
-  box-shadow: 0 12px 20px rgba(28, 27, 25, 0.12);
+  box-shadow: var(--shadow-tight);
 }
 
 .nav-item.active {
-  background: rgba(27, 142, 165, 0.18);
-  border-color: rgba(27, 142, 165, 0.4);
-  color: var(--color-accent-strong);
+  background: rgba(0, 167, 181, 0.18);
+  border-color: rgba(0, 167, 181, 0.4);
+  color: var(--color-ink);
 }
 
 .nav-icon {
@@ -93,11 +94,11 @@
 }
 
 .resources-content {
-  background: rgba(255, 255, 255, 0.9);
+  background: rgba(255, 255, 255, 0.96);
   border: 1px solid var(--color-border);
-  border-radius: 28px;
+  border-radius: var(--radius-lg);
   padding: 2rem;
-  box-shadow: 0 24px 46px rgba(28, 27, 25, 0.08);
+  box-shadow: var(--shadow-soft);
 }
 
 .doc-section {
@@ -123,9 +124,9 @@
 }
 
 .content-block {
-  background: rgba(255, 255, 255, 0.85);
+  background: rgba(255, 255, 255, 0.95);
   border: 1px solid var(--color-border);
-  border-radius: 20px;
+  border-radius: var(--radius-md);
   padding: 1.5rem;
   display: flex;
   flex-direction: column;
@@ -145,11 +146,11 @@
 }
 
 .code-block {
-  background: rgba(28, 27, 25, 0.06);
-  border-radius: 16px;
+  background: rgba(15, 15, 15, 0.06);
+  border-radius: var(--radius-md);
   padding: 1rem;
   overflow-x: auto;
-  border: 1px solid rgba(28, 27, 25, 0.08);
+  border: 1px solid rgba(15, 15, 15, 0.08);
 }
 
 .code-block code {
@@ -161,10 +162,10 @@
 .info-box {
   display: flex;
   gap: 0.9rem;
-  background: rgba(27, 142, 165, 0.12);
-  border-radius: 16px;
+  background: rgba(183, 172, 232, 0.18);
+  border-radius: var(--radius-md);
   padding: 1rem;
-  border: 1px solid rgba(27, 142, 165, 0.25);
+  border: 1px solid rgba(183, 172, 232, 0.35);
 }
 
 .info-box strong {

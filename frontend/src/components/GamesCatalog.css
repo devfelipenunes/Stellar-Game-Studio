@@ -12,8 +12,9 @@
 }
 
 .hero-content h2 {
-  font-family: var(--font-display);
-  font-size: clamp(2rem, 2.4vw + 1rem, 3.2rem);
+  font-family: var(--font-serif);
+  font-size: clamp(1.6rem, 1.8vw + 1rem, 2.6rem);
+  font-weight: 500;
   margin-bottom: 1rem;
 }
 
@@ -27,12 +28,14 @@
   align-items: center;
   padding: 0.35rem 0.9rem;
   border-radius: 999px;
-  background: rgba(27, 142, 165, 0.15);
-  color: var(--color-accent-strong);
+  background: var(--color-accent);
+  color: var(--color-ink);
+  border: 1px solid var(--color-ink);
   font-size: 0.75rem;
   font-weight: 700;
   letter-spacing: 0.12em;
   text-transform: uppercase;
+  font-family: var(--font-display);
 }
 
 .hero-actions {
@@ -42,6 +45,12 @@
   margin-bottom: 1.75rem;
 }
 
+.hero-actions button {
+  font-family: var(--font-display);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
 .hero-metrics {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -49,10 +58,11 @@
 }
 
 .hero-metrics div {
-  background: rgba(255, 255, 255, 0.7);
-  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.9);
+  border-radius: var(--radius-md);
   padding: 0.9rem 1rem;
   border: 1px solid var(--color-border);
+  box-shadow: var(--shadow-tight);
 }
 
 .metric-label {
@@ -62,6 +72,7 @@
   letter-spacing: 0.1em;
   color: var(--color-ink-muted);
   margin-bottom: 0.35rem;
+  font-family: var(--font-display);
 }
 
 .metric-value {
@@ -69,23 +80,41 @@
 }
 
 .hero-panel {
-  background: rgba(255, 255, 255, 0.85);
-  border-radius: 24px;
-  border: 1px solid var(--color-border);
-  padding: 1.5rem;
+  background: var(--color-ink);
+  color: var(--color-bg);
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--color-ink);
+  padding: 1.6rem;
   display: flex;
   flex-direction: column;
   gap: 1rem;
-  box-shadow: 0 25px 40px rgba(28, 27, 25, 0.08);
+  box-shadow: var(--shadow-soft);
+  position: relative;
+}
+
+.hero-panel::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 6px;
+  background: var(--color-accent);
+  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
 }
 
 .hero-panel pre {
-  background: rgba(28, 27, 25, 0.06);
-  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: var(--radius-md);
   padding: 1rem;
   font-family: var(--font-mono);
   font-size: 0.8rem;
   white-space: pre-wrap;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+}
+
+.hero-panel pre code {
+  color: rgba(255, 255, 255, 0.92);
 }
 
 .panel-title {
@@ -93,11 +122,12 @@
   letter-spacing: 0.08em;
   text-transform: uppercase;
   font-size: 0.75rem;
-  color: var(--color-ink-muted);
+  color: rgba(255, 255, 255, 0.7);
+  font-family: var(--font-display);
 }
 
 .panel-footer {
-  color: var(--color-ink-muted);
+  color: rgba(255, 255, 255, 0.7);
   font-size: 0.85rem;
 }
 
@@ -132,9 +162,9 @@
 
 .game-card {
   text-align: left;
-  background: rgba(255, 255, 255, 0.9);
+  background: rgba(255, 255, 255, 0.96);
   border: 1px solid var(--color-border);
-  border-radius: 22px;
+  border-radius: var(--radius-lg);
   padding: 1.4rem;
   display: flex;
   flex-direction: column;
@@ -142,6 +172,8 @@
   color: var(--color-ink);
   cursor: pointer;
   animation: fadeUp 0.6s ease both;
+  box-shadow: var(--shadow-tight);
+  transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
 }
 
 .game-card:disabled {
@@ -153,7 +185,8 @@
 
 .game-card:not(:disabled):hover {
   transform: translateY(-4px);
-  box-shadow: 0 18px 35px rgba(28, 27, 25, 0.12);
+  box-shadow: var(--shadow-soft);
+  border-color: var(--color-ink);
 }
 
 .game-card-header {
@@ -183,14 +216,15 @@
 }
 
 .game-tag {
-  background: rgba(27, 142, 165, 0.12);
-  color: var(--color-accent-strong);
+  background: rgba(253, 218, 36, 0.2);
+  color: var(--color-ink);
   padding: 0.25rem 0.6rem;
   border-radius: 999px;
   font-size: 0.7rem;
   text-transform: uppercase;
   letter-spacing: 0.08em;
   font-weight: 700;
+  font-family: var(--font-display);
 }
 
 .game-cta {
@@ -208,19 +242,20 @@
 
 .quickstart-card,
 .integration-card {
-  background: rgba(255, 255, 255, 0.85);
+  background: rgba(255, 255, 255, 0.95);
   border: 1px solid var(--color-border);
-  border-radius: 20px;
+  border-radius: var(--radius-md);
   padding: 1.25rem;
   display: flex;
   flex-direction: column;
   gap: 0.6rem;
+  box-shadow: var(--shadow-tight);
 }
 
 .quickstart-card code {
   font-family: var(--font-mono);
   font-size: 0.8rem;
-  background: rgba(28, 27, 25, 0.08);
+  background: rgba(15, 15, 15, 0.08);
   padding: 0.4rem 0.6rem;
   border-radius: 10px;
   display: inline-block;

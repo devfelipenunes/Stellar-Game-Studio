@@ -17,12 +17,7 @@ export function Layout({ children }: LayoutProps) {
 
       <header className="studio-header">
         <div className="brand">
-          <div className="brand-label">Stellar Game Studio</div>
-          <div className="brand-title">Build web3 game loops on Stellar</div>
-          <p className="brand-subtitle">
-            Ship playable on-chain games with deterministic outcomes, points-based mechanics, and
-            plug-and-play contracts.
-          </p>
+          <div className="brand-title">Stellar Game Studio</div>
         </div>
         <div className="header-actions">
           <div className="network-pill">Testnet</div>
@@ -33,8 +28,7 @@ export function Layout({ children }: LayoutProps) {
       <main className="studio-main">{children}</main>
 
       <footer className="studio-footer">
-        <span>Testnet-ready with `start_game` and `end_game` hooks.</span>
-        <span>Crafted for Stellar builders.</span>
+        <span>Built with ♥️for Stellar Developers</span>
       </footer>
     </div>
   );

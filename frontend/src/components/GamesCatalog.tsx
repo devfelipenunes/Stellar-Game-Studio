@@ -110,11 +110,10 @@ export function GamesCatalog() {
     <div className="studio-home">
       <section className="hero">
         <div className="hero-content">
-          <div className="hero-pill">Testnet Ready</div>
-          <h2>Launch on-chain games with instant start and end hooks.</h2>
+          <h2>Development Tools For Web3 Game Builders On Stellar</h2>
           <p>
             Build with Stellar Game Studio to wire points-based mechanics, deterministic outcomes,
-            and multi-player flows without custom glue code.
+            and multi-player flows.
           </p>
           <div className="hero-actions">
             <button onClick={() => scrollToSection('games')}>Explore Games</button>
@@ -204,19 +203,19 @@ export function GamesCatalog() {
         </div>
         <div className="quickstart-grid">
           <div className="quickstart-card">
-            <h4>1. Setup</h4>
-            <p>Build and deploy contracts to testnet.</p>
+            <h4>1. Fork Repository</h4>
+            <p>Fork and clone the Stellar Game Studio repo.</p>
+            <code>git clone https://github.com/jamesbachini/Stellar-Game-Studio</code>
+          </div>
+          <div className="quickstart-card">
+            <h4>2. Setup</h4>
+            <p>Install dependencies, build, and deploy contracts.</p>
             <code>bun run setup</code>
           </div>
           <div className="quickstart-card">
-            <h4>2. Generate bindings</h4>
-            <p>Keep the frontend synced with your contracts.</p>
-            <code>bun run bindings</code>
-          </div>
-          <div className="quickstart-card">
-            <h4>3. Build the game loop</h4>
-            <p>Call start and end hooks from your contract.</p>
-            <code>start_game / end_game</code>
+            <h4>3. Build The Game</h4>
+            <p>Fork a template contract and wire your gameplay.</p>
+            <code>cp -r contracts/number-guess contracts/my-game</code>
           </div>
         </div>
       </section>
