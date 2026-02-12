@@ -1,0 +1,34 @@
+# Prover.toml - Exemplo de inputs para gerar provas
+#
+# Para gerar uma prova com estes valores:
+#   nargo prove
+#
+# Para verificar a prova:
+#   nargo verify
+
+# ========================
+# INPUTS PRIVADOS (Witness)
+# ========================
+# Estes valores são conhecidos apenas pelo provador e NÃO aparecem na prova
+
+# Quantidade de dedos escolhida pelo jogador (0-5)
+hand_value = "3"
+
+# Salt aleatório (deve ser mantido secreto e único por jogada)
+# Usar BigInt ou hex string para valores grandes
+salt = "0x0000000000000000000000000000000000000000000000000000000000003039"
+
+# ========================
+# INPUTS PÚBLICOS
+# ========================
+# Estes valores são visíveis na prova e podem ser verificados por qualquer um
+
+# Commitment: Hash Poseidon dos valores privados
+# Este valor deve ser calculado off-chain ANTES de gerar a prova:
+#   commitment = poseidon([hand_value, salt])
+#
+# Para este exemplo (hand_value=3, salt=12345):
+commitment = "0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef"
+
+# Limite máximo de dedos permitido na sala (geralmente 5)
+max_allowed = "5"

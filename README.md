@@ -106,6 +106,42 @@ pub trait GameHub {
 }
 ```
 
+## 🔐 Zero-Knowledge Gaming
+
+This repository features **ZK-Porrinha**, a production-ready example of Zero-Knowledge proofs in Stellar gaming using Protocol 25 (X-Ray) primitives.
+
+### Why ZK Matters for Games
+
+Traditional blockchain games struggle with hidden information (poker hands, Battleship positions, simultaneous moves). ZK-Porrinha demonstrates how to build "fair by design" mechanics using:
+
+- **BN254 elliptic curve** verification (native Soroban support)
+- **Poseidon2 hash function** (ZK-friendly, Protocol 25+)
+- **Noir circuits** with Barretenberg proof generation
+- **Commit-reveal protocol** where players prove validity without revealing choices
+
+### ZK-Porrinha Architecture
+
+```
+circuits/zk-porrinha/     → Noir circuit (validates hand 0-5, generates proof)
+contracts/noir-verifier/  → BN254 proof verifier (Soroban native ops)
+contracts/zk-porrinha/    → Game logic + on-chain verification
+frontend/                 → React + Noir.js (WASM proof generation)
+```
+
+**Game Flow:**
+1. Player commits hand + proof (hand remains private)
+2. Both players commit without seeing each other
+3. Proofs verified on-chain → hands revealed simultaneously
+4. Winner determined fairly (impossible to cheat)
+
+**ZK Guarantees:**
+- ✅ Can't see opponent's move before committing
+- ✅ Can't submit invalid hand values (proof fails)
+- ✅ Can't change move after seeing opponent (commitment binding)
+- ✅ Winner computed deterministically on-chain
+
+See `contracts/zk-porrinha/README.md` and `circuits/zk-porrinha/` for implementation details.
+
 ## Studio Reference
 
 Run the studio frontend locally (from `sgs_frontend/`):

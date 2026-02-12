@@ -1,0 +1,16 @@
+# Noir artifacts
+target/
+proofs/
+Prover.toml
+Verifier.toml
+
+# Build outputs
+*.proof
+*.vk
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~

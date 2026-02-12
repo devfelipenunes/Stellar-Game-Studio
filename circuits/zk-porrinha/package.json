@@ -1,0 +1,12 @@
+{
+  "type": "module",
+  "name": "zk-porrinha-circuit-tools",
+  "version": "1.0.0",
+  "description": "Tools for ZK-Porrinha Noir circuit",
+  "scripts": {
+    "generate-commitment": "node scripts/generate-commitment.js"
+  },
+  "dependencies": {
+    "poseidon-lite": "^0.2.0"
+  }
+}

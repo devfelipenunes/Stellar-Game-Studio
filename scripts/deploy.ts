@@ -300,8 +300,28 @@ for (const contract of contracts) {
     console.log(`  WASM hash: ${wasmHash}`);
 
     console.log("  Deploying and initializing...");
-    const deployResult =
-      await $`stellar contract deploy --wasm-hash ${wasmHash} --source-account ${adminSecret} --network ${NETWORK} -- --admin ${adminAddress} --game-hub ${mockGameHubId}`.text();
+    
+    // ZK Porrinha requires additional constructor arguments
+    let deployResult: string;
+    if (contract.packageName === 'zk-porrinha') {
+      // Get the deployed noir-verifier contract ID from deployed contracts
+      const verifierContractId = deployed['noir-verifier'] || existingContractIds['noir-verifier'];
+      if (!verifierContractId) {
+        console.error("❌ noir-verifier not deployed yet. Deploy it first with: bun run deploy noir-verifier");
+        process.exit(1);
+      }
+      console.log(`  Using noir-verifier: ${verifierContractId}`);
+      
+      // Use native XLM token address (Stellar Asset Contract for XLM)
+      const xlmToken = "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC";
+      
+      deployResult =
+        await $`stellar contract deploy --wasm-hash ${wasmHash} --source-account ${adminSecret} --network ${NETWORK} -- --admin ${adminAddress} --verifier ${verifierContractId} --game-hub ${mockGameHubId} --xlm-token ${xlmToken}`.text();
+    } else {
+      deployResult =
+        await $`stellar contract deploy --wasm-hash ${wasmHash} --source-account ${adminSecret} --network ${NETWORK} -- --admin ${adminAddress} --game-hub ${mockGameHubId}`.text();
+    }
+    
     const contractId = deployResult.trim();
     deployed[contract.packageName] = contractId;
     console.log(`✅ ${contract.packageName} deployed: ${contractId}\n`);
