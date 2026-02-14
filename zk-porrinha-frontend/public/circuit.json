@@ -1,0 +1,34 @@
+{
+  "noir_version": "0.36.0+801c71880ecf8386a26737a5d8bb5b4cb164b2ab",
+  "hash": 13522920199002090514,
+  "abi": {
+    "parameters": [
+      {
+        "name": "hand1",
+        "type": { "kind": "integer", "sign": "unsigned", "width": 32 },
+        "visibility": "private"
+      },
+      { "name": "salt1", "type": { "kind": "field" }, "visibility": "private" },
+      {
+        "name": "hand2",
+        "type": { "kind": "integer", "sign": "unsigned", "width": 32 },
+        "visibility": "private"
+      },
+      { "name": "salt2", "type": { "kind": "field" }, "visibility": "private" },
+      { "name": "h1", "type": { "kind": "field" }, "visibility": "public" },
+      { "name": "h2", "type": { "kind": "field" }, "visibility": "public" }
+    ],
+    "return_type": { "abi_type": { "kind": "field" }, "visibility": "public" },
+    "error_types": {}
+  },
+  "bytecode": "H4sIAAAAAAAA/9VW4U7CMBDuOmGDgaLw0x99hHbdoPvHq0AY0USDMYu8vbELVzjLJAZuRr7kcseVfvl63d0WsB0m1h4gDqyF4GsIL8ch14F1zo7h9s7BaznNsnKWlkqrhUyLpcllli+nRhmVm3yVGq1Lk5lZsSxmslCZLtU6L/Ra7oC55HlQ4HWDXCpuiWsRgY/9osZQQIywxYKdyZUCl4oIdcUtXST1AxddrnOv9y8bhbPra5Qe+L4riGuUOiE8AdSNwhldo/QIdfXZdTRKj9E1Sps6EzqdstY2tnbjaf2EOEBx0hC7fQNrQ2u31u4g38TNEUf4S+6RtXu2e6tjPgdOXN8bwudgQHhXbZ65Q3jmUUtn9uelvAyKkotg9u7vYsJo+9u9g2pewU73jrwMqvuP6+DmBp4fbiaFqBb1eocdZmEXxTVGKH4Ev6iq8vWtEtVGLFYrsX2unsTmo3xfv2y2+80x+G9fCewwDOc0h00df9IOv4zYMfooTrw1XFgfwQ+/uedP/dfP49ywYc1xjhtyX9SoAf9HDgAA",
+  "debug_symbols": "ldLNCoQgFAXgd7nrFpl/1asMQ1hZCGJRNjBE7z7OjEGYG3ceL58Kxx162W5jo8wwrVA/dtBTJ6yajEs7FL+tdRbmm1YrFgs1LnAG0vRuhfGRwaC0hJrnxzMDnApIKqCpgEUB4SegPAA8FZSpoEoFKI8JynIvGKKhQMkiWjYjxSmq26uibXNUesHx7Y5o3ZxUp2AsFNG+S4K8KCkJBUsTLrSL0lqNzfXvu+2XWJRotfRx2Ex3mdr3/J+4Iz4=",
+  "file_map": {
+    "70": {
+      "source": "use std::hash::poseidon2_permutation;\n\nfn main(\n    // Private inputs (player secrets)\n    hand1: u32,\n    salt1: Field,\n    hand2: u32,\n    salt2: Field,\n\n    // Public inputs (commitments on Stellar)\n    h1: pub Field,\n    h2: pub Field\n) -> pub Field {\n    // 1. Enforce game rules (max 3 fingers per player)\n    assert(hand1 <= 3);\n    assert(hand2 <= 3);\n\n    // 2. Verify commitments (integrity check)\n    // Note: poseidon2_permutation in Noir >=0.31 expects array of 4 elements (state size)\n    // Fill unused elements with zeros\n    let commitment1 = poseidon2_permutation([hand1 as Field, salt1, 0, 0], 4)[0];\n    let commitment2 = poseidon2_permutation([hand2 as Field, salt2, 0, 0], 4)[0];\n    \n    assert(commitment1 == h1);\n    assert(commitment2 == h2);\n\n    // 3. Calculate total sum (the public output)\n    let total_sum = (hand1 + hand2) as Field;\n\n    total_sum\n}\n\n// --- UNIT TEST SUITE ---\n\n#[test]\nfn test_valid_round() {\n    let s1 = 0x111;\n    let s2 = 0x222;\n    \n    // Simulating what frontend would send to Stellar (Commits)\n    let hash1 = poseidon2_permutation([3 as Field, s1 as Field, 0, 0], 4)[0]; // Player 1: 3 fingers\n    let hash2 = poseidon2_permutation([1 as Field, s2 as Field, 0, 0], 4)[0]; // Player 2: 1 finger\n\n    // Execute the circuit\n    let result = main(3, s1 as Field, 1, s2 as Field, hash1, hash2);\n    \n    assert(result == 4); // Sum should be 4\n}\n\n#[test(should_fail)]\nfn test_limit_exceeded() {\n    let s1 = 0x111;\n    let s2 = 0x222;\n    let hash1 = poseidon2_permutation([5 as Field, s1 as Field, 0, 0], 4)[0]; // Trying 5 fingers\n    let hash2 = poseidon2_permutation([0 as Field, s2 as Field, 0, 0], 4)[0];\n\n    let _ = main(5, s1 as Field, 0, s2 as Field, hash1, hash2);\n}\n\n#[test(should_fail)]\nfn test_fraud_attempt_hash() {\n    let s1 = 0x111;\n    let s2 = 0x222;\n    \n    // Player 1 committed '2' on the contract\n    let hash_original = poseidon2_permutation([2 as Field, s1 as Field, 0, 0], 4)[0];\n    let hash2 = poseidon2_permutation([1 as Field, s2 as Field, 0, 0], 4)[0];\n\n    // During proof generation, they try to claim they played '3' to win\n    // Circuit MUST fail because hash of 3 doesn't match original commit\n    let _ = main(3, s1 as Field, 1, s2 as Field, hash_original, hash2);\n}\n\n#[test]\nfn test_both_players_zero() {\n    let s1 = 0x333;\n    let s2 = 0x444;\n    \n    // Both players show 0 fingers (valid edge case)\n    let hash1 = poseidon2_permutation([0 as Field, s1 as Field, 0, 0], 4)[0];\n    let hash2 = poseidon2_permutation([0 as Field, s2 as Field, 0, 0], 4)[0];\n\n    let result = main(0, s1 as Field, 0, s2 as Field, hash1, hash2);\n    \n    assert(result == 0); // Sum should be 0\n}\n\n#[test]\nfn test_maximum_sum() {\n    let s1 = 0x555;\n    let s2 = 0x666;\n    \n    // Both players show max fingers (3+3=6)\n    let hash1 = poseidon2_permutation([3 as Field, s1 as Field, 0, 0], 4)[0];\n    let hash2 = poseidon2_permutation([3 as Field, s2 as Field, 0, 0], 4)[0];\n\n    let result = main(3, s1 as Field, 3, s2 as Field, hash1, hash2);\n    \n    assert(result == 6); // Maximum possible sum\n}\n\n#[test]\nfn test_different_salts_same_hand() {\n    let s1 = 0x777;\n    let s2 = 0x888;\n    \n    // Same hand value (2) but different salts produce different commitments\n    let hash1 = poseidon2_permutation([2 as Field, s1 as Field], 2)[0];\n    let hash2 = poseidon2_permutation([2 as Field, s2 as Field], 2)[0];\n\n    // Both players play 2 fingers with different salts\n    let result = main(2, s1 as Field, 2, s2 as Field, hash1, hash2);\n    \n    assert(result == 4);\n}\n\n#[test(should_fail)]\nfn test_player2_exceeds_limit() {\n    let s1 = 0x999;\n    let s2 = 0xAAA;\n    \n    // Player 2 tries to play 4 fingers (invalid)\n    let hash1 = poseidon2_permutation([2 as Field, s1 as Field], 2)[0];\n    let hash2 = poseidon2_permutation([4 as Field, s2 as Field], 2)[0];\n\n    let _ = main(2, s1 as Field, 4, s2 as Field, hash1, hash2);\n}\n\n#[test(should_fail)]\nfn test_swapped_commitments() {\n    let s1 = 0xBBB;\n    let s2 = 0xCCC;\n    \n    // Generate commitments\n    let hash1 = poseidon2_permutation([1 as Field, s1 as Field], 2)[0];\n    let hash2 = poseidon2_permutation([2 as Field, s2 as Field], 2)[0];\n\n    // Try to verify with swapped commitments (should fail)\n    let _ = main(1, s1 as Field, 2, s2 as Field, hash2, hash1);\n}",
+      "path": "/l/disk0/fnunes/Documentos/me/Stellar-Game-Studio/circuits/zk-porrinha/src/main.nr"
+    }
+  },
+  "names": ["main"],
+  "brillig_names": ["directive_integer_quotient"]
+}

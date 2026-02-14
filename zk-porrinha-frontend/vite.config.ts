@@ -17,7 +17,6 @@ export default defineConfig({
     dedupe: ['@stellar/stellar-sdk']
   },
   optimizeDeps: {
-    include: ['@stellar/stellar-sdk', '@stellar/stellar-sdk/contract', '@stellar/stellar-sdk/rpc', 'buffer'],
     exclude: ['@noir-lang/noir_js', '@noir-lang/backend_barretenberg'],
     esbuildOptions: {
       define: {

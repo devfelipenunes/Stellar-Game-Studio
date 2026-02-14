@@ -1,5 +1,28 @@
 import { useState, useEffect, useRef } from 'react';
+import React from 'react';
 import { zkPorrinhaService } from './zkPorrinhaService';
+import {
+  createRoomAction,
+  joinRoomAction,
+  commitHandAction,
+  listRecentRoomsAction,
+  getRoomAction,
+  determineRoomPhase,
+  formatXLM as formatXLMService,
+  runAction as runActionService,
+  logMessage as logMessageService,
+  handleCreateRoomAction,
+  handleJoinRoomAction,
+  handleCommitAction,
+  revealAndResolveAction,
+  handleQuickstartAction,
+} from './services/zkPorrinhaUIService';
+import PixelLayout from './PixelLayout';
+import LogPanel from './components/LogPanel';
+import QuickstartCard from './components/QuickstartCard';
+import PlayerBalances from './components/PlayerBalances';
+import RevealForm from './components/RevealForm';
+import { loadSecret } from './secrets';
 import { useWallet } from '@/hooks/useWallet';
 import { devWalletService, DevWalletService } from '@/services/devWalletService';
 import { BalanceDisplay } from './BalanceDisplay';
@@ -40,6 +63,8 @@ export function ZkPorrinhaGame({
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
   const [roomPhase, setRoomPhase] = useState<RoomPhase>('lobby');
+  const [uiLog, setUiLog] = useState<string[]>([]);
+  const [isGeneratingProof, setIsGeneratingProof] = useState<boolean>(false);
   
   // Game inputs
   const [betAmount, setBetAmount] = useState(DEFAULT_BET);
@@ -50,6 +75,19 @@ export function ZkPorrinhaGame({
 
   // Feature flags
   const quickstartAvailable = walletType === 'dev';
+  const ONLY_QUICKSTART = true; // show only quickstart UI for now
+  const [quickstartRunning, setQuickstartRunning] = useState<boolean>(false);
+  const quickstartRunningRef = useRef<boolean>(false);
+  const quickstartButtonRef = useRef<HTMLButtonElement | null>(null);
+
+  // small inline SVG spinner
+  const Spinner = ({ size = 14 }: { size?: number }) => (
+    <svg className="inline-block align-middle mr-2" width={size} height={size} viewBox="0 0 50 50">
+      <circle cx="25" cy="25" r="20" fill="none" stroke="#FBBF24" strokeWidth="5" strokeLinecap="round" strokeDasharray="31.4 31.4">
+        <animateTransform attributeName="transform" type="rotate" from="0 25 25" to="360 25 25" dur="0.9s" repeatCount="indefinite" />
+      </circle>
+    </svg>
+  );
   
   // Store committed values per room to display correctly in reveal phase
   const [committedValues, setCommittedValues] = useState<{
@@ -59,26 +97,33 @@ export function ZkPorrinhaGame({
   // Transfer animations
   const [transfers, setTransfers] = useState<TransferItem[]>([]);
   const [showTransfers, setShowTransfers] = useState(false);
-  const actionLock = useRef(false);
+  
 
   // Tx / result feedback
   const [lastTxHash, setLastTxHash] = useState<string | undefined>(undefined);
   const [gameWinner, setGameWinner] = useState<string | undefined>(undefined);
-  const [gameWinAmount, setGameWinAmount] = useState<number | undefined>(undefined);
+  const [gameWinAmount, setGameWinAmount] = useState<bigint | undefined>(undefined);
 
   const runAction = async (action: () => Promise<void>) => {
-    if (actionLock.current || loading) return;
-    actionLock.current = true;
-    try {
-      await action();
-    } finally {
-      actionLock.current = false;
-    }
+    await runActionService(action);
   };
+
+  function pushLog(message: string) {
+    const msg = logMessageService(message);
+    setUiLog((p) => [msg, ...p].slice(0, 12));
+  }
+
+  useEffect(() => {
+    if (currentRoomId) pushLog(`Room set to #${currentRoomId}`);
+  }, [currentRoomId]);
+
+  useEffect(() => {
+    if (lastTxHash) pushLog(`TX: ${lastTxHash.slice(0,8)}...`);
+  }, [lastTxHash]);
 
   const loadRooms = async () => {
     try {
-      const rows = await zkPorrinhaService.listRecentRooms(10);
+      const rows = await listRecentRoomsAction(10);
       setRooms(rows);
     } catch (e) {
       console.error('loadRooms failed', e);
@@ -88,9 +133,9 @@ export function ZkPorrinhaGame({
   const refreshRoom = async () => {
     try {
       if (!currentRoomId) return;
-      const room = await zkPorrinhaService.getRoom(currentRoomId);
+      const room = await getRoomAction(currentRoomId);
       setCurrentRoom(room);
-      updatePhaseFromRoom(room);
+      setRoomPhase(determineRoomPhase(room));
     } catch (e) {
       console.error('refreshRoom failed', e);
     }
@@ -98,28 +143,13 @@ export function ZkPorrinhaGame({
   
   const updatePhaseFromRoom = (room: Room | null) => {
     if (!room) return;
-    
-    const status = room.status as { tag: string };
-    
-    switch (status.tag) {
-      case 'Lobby':
-        setRoomPhase('lobby');
-        break;
-      case 'Commit':
-        setRoomPhase('commit');
-        break;
-      case 'Settled':
-        setRoomPhase('settled');
-        break;
-    }
+    setRoomPhase(determineRoomPhase(room));
   };
   
   const handleStartNewGame = () => {
-    if (currentRoom?.last_winner) {
+    if (currentRoom && roomPhase === 'settled') {
       onGameComplete();
     }
-    
-    actionLock.current = false;
     setCurrentRoomId(null);
     setCurrentRoom(null);
     setRoomPhase('lobby');
@@ -135,32 +165,26 @@ export function ZkPorrinhaGame({
   };
   
   const handleCreateRoom = async () => {
-    await runAction(async () => {
+    await runActionService(async () => {
       setLoading(true);
       setError(null);
       setSuccess(null);
       setLastTxHash(undefined);
       setGameWinner(undefined);
       setGameWinAmount(undefined);
-      
       try {
         const signer = await getContractSigner();
         if (!signer) throw new Error('No signer available');
-        
-        const result = await zkPorrinhaService.createRoom(
-          userAddress,
-          signer,
-          BigInt(betAmount)
-        );
-        
-        if (result) {
-          setSuccess(`Room ${result.roomId} created! TX: ${result.txHash.slice(0, 8)}...`);
-          setLastTxHash(result.txHash);
-          setCurrentRoomId(result.roomId);
+        const res = await handleCreateRoomAction(userAddress, signer, betAmount);
+        res.logs.forEach(l => pushLog(l));
+        if (res.success) {
+          setSuccess(`Room ${res.roomId} created! TX: ${String(res.txHash).slice(0,8)}...`);
+          setLastTxHash(res.txHash);
+          setCurrentRoomId(res.roomId!);
           await refreshRoom();
           await loadRooms();
         } else {
-          throw new Error('Failed to create room');
+          setError(res.error || 'Failed to create room');
         }
       } catch (e: any) {
         setError(e.message || 'Failed to create room');
@@ -171,24 +195,22 @@ export function ZkPorrinhaGame({
   };
   
   const handleJoinRoom = async (roomId: bigint) => {
-    await runAction(async () => {
+    await runActionService(async () => {
       setLoading(true);
       setError(null);
       setSuccess(null);
-      
       try {
         const signer = await getContractSigner();
         if (!signer) throw new Error('No signer available');
-        
-        const result = await zkPorrinhaService.joinRoom(roomId, userAddress, signer);
-        
-        if (result.success) {
-          const betXlm = result.betAmount ? (Number(result.betAmount) / 10_000_000).toFixed(1) : '?';
-          setSuccess(`Joined room! Prize pool: ${(parseFloat(betXlm) * 2).toFixed(1)} XLM. TX: ${result.txHash?.slice(0, 8)}...`);
+        const res = await handleJoinRoomAction(roomId, userAddress, signer);
+        res.logs.forEach(l => pushLog(l));
+        if (res.success) {
+          const betXlm = res.betAmount ? (Number(res.betAmount) / 10_000_000).toFixed(1) : '?';
+          setSuccess(`Joined room! Prize pool: ${(parseFloat(betXlm) * 2).toFixed(1)} XLM. TX: ${String(res.txHash).slice(0,8)}...`);
           setCurrentRoomId(roomId);
           await refreshRoom();
         } else {
-          throw new Error('Failed to join room');
+          setError(res.error || 'Failed to join room');
         }
       } catch (e: any) {
         setError(e.message || 'Failed to join room');
@@ -200,46 +222,70 @@ export function ZkPorrinhaGame({
   
   const handleCommit = async () => {
     if (!currentRoomId) return;
-    
-    await runAction(async () => {
+    await runActionService(async () => {
       setLoading(true);
       setError(null);
       setSuccess(null);
-      
+      setIsGeneratingProof(true);
       try {
+        pushLog(`Commit: hand=${selectedHand} parity=${selectedParity} total=${selectedTotalGuess}`);
         const signer = await getContractSigner();
         if (!signer) throw new Error('No signer available');
-        
-        console.log(`Committing hand=${selectedHand}, parity=${selectedParity}, totalGuess=${selectedTotalGuess}`);
-        
-        const result = await zkPorrinhaService.commitHandWithProof(
-          currentRoomId,
-          userAddress,
-          signer,
-          selectedHand,
-          selectedParity,
-          selectedTotalGuess
-        );
-        
-        if (result.success && result.salt) {
-          const saltValue = result.salt; // Garantir que não é undefined
+        const res = await handleCommitAction(currentRoomId, userAddress, signer, selectedHand, selectedParity, selectedTotalGuess);
+        res.logs.forEach(l => pushLog(l));
+        if (res.success) {
+          const saltValue = res.salt!;
           setSavedSalt(saltValue);
-          // Save committed values AND salt for this room
           setCommittedValues(prev => ({
             ...prev,
-            [currentRoomId.toString()]: { 
-              hand: selectedHand, 
-              parity: selectedParity,
-              salt: saltValue
-            }
+            [currentRoomId.toString()]: { hand: selectedHand, parity: selectedParity, salt: saltValue }
           }));
-          setSuccess('Commitment submitted with ZK proof! Keep your values safe until reveal phase.');
+
+          if (res.autoResolved && res.winner) {
+            setGameWinner(res.winner);
+            if (res.totalSum) {
+              const betAmount = currentRoom?.bet_amount || BigInt(0);
+              setGameWinAmount(betAmount * BigInt(2)); // Total pot
+            }
+            if (res.resolveTxHash) {
+              setLastTxHash(res.resolveTxHash);
+            }
+            setSuccess('🏆 Game auto-resolved! Check the winner below.');
+          } else {
+            setSuccess('Commitment submitted with ZK proof! Keep your values safe until reveal phase.');
+          }
+          
           await refreshRoom();
         } else {
-          throw new Error('Failed to commit hand');
+          setError(res.error || 'Failed to commit hand');
         }
       } catch (e: any) {
         setError(e.message || 'Failed to commit hand');
+      } finally {
+        setLoading(false);
+        setIsGeneratingProof(false);
+      }
+    });
+  };
+
+  const handleResolve = async (otherHand: number, otherSaltHex: string) => {
+    if (!currentRoomId) return;
+    await runAction(async () => {
+      setLoading(true);
+      try {
+        const signer = await getContractSigner();
+        if (!signer) throw new Error('No signer');
+        const mySecret = loadSecret(currentRoomId, userAddress);
+        if (!mySecret) throw new Error('Missing your secret (salt/hand). You must have committed from this browser/session.');
+        const res = await revealAndResolveAction(currentRoomId, userAddress, signer, mySecret, { hand: otherHand, saltHex: otherSaltHex });
+        if (res.success) {
+          pushLog('Resolved round on-chain');
+          await refreshRoom();
+        } else {
+          setError('Resolve failed');
+        }
+      } catch (e: any) {
+        setError(e?.message || String(e));
       } finally {
         setLoading(false);
       }
@@ -248,68 +294,39 @@ export function ZkPorrinhaGame({
   
   const handleQuickstart = async () => {
     if (!quickstartAvailable) return;
-    
-    await runAction(async () => {
+    if (quickstartRunningRef.current) return;
+    if (quickstartButtonRef.current) {
+      try { quickstartButtonRef.current.disabled = true; } catch (e) { /* ignore */ }
+    }
+    quickstartRunningRef.current = true;
+    setQuickstartRunning(true);
+    await runActionService(async () => {
       setLoading(true);
       setError(null);
       setSuccess(null);
-      
       try {
-        const originalPlayer = devWalletService.getCurrentPlayer();
-        
-        let player1Address = '';
-        let player2Address = '';
-        let player1Signer: ReturnType<typeof devWalletService.getSigner> | null = null;
-        let player2Signer: ReturnType<typeof devWalletService.getSigner> | null = null;
-        
-        try {
-          // Initialize player 1
-          await devWalletService.initPlayer(1);
-          player1Address = devWalletService.getPublicKey();
-          player1Signer = devWalletService.getSigner();
-          
-          // Initialize player 2
-          await devWalletService.initPlayer(2);
-          player2Address = devWalletService.getPublicKey();
-          player2Signer = devWalletService.getSigner();
-        } finally {
-          if (originalPlayer) {
-            await devWalletService.initPlayer(originalPlayer);
+        const res = await handleQuickstartAction(betAmount);
+        (res.logs || []).forEach(l => pushLog(l));
+        if (res.success) {
+          if (res.updatedRoom) {
+            setCurrentRoom(res.updatedRoom);
+            setCurrentRoomId(res.roomId);
+            setRoomPhase(determineRoomPhase(res.updatedRoom));
           }
+          setSuccess('Quickstart complete! Both players are in the room. Now commit your hands.');
+          await loadRooms();
+        } else {
+          setError(res.error || 'Quickstart failed');
         }
-        
-        if (!player1Signer || !player2Signer) {
-          throw new Error('Failed to initialize dev wallet signers');
-        }
-        
-        if (player1Address === player2Address) {
-          throw new Error('Quickstart requires two different dev wallets');
-        }
-        
-        // Player 1 creates room
-        setSuccess('Quickstart: Player 1 creating room...');
-        const result = await zkPorrinhaService.createRoom(
-          player1Address,
-          player1Signer,
-          BigInt(betAmount)
-        );
-        
-        if (!result) throw new Error('Failed to create room');
-        
-        setCurrentRoomId(result.roomId);
-        await new Promise(r => setTimeout(r, 1000));
-        
-        // Player 2 joins
-        setSuccess('Quickstart: Player 2 joining room...');
-        await zkPorrinhaService.joinRoom(result.roomId, player2Address, player2Signer);
-        
-        await refreshRoom();
-        setSuccess('Quickstart complete! Both players are in the room. Now commit your hands.');
-        await loadRooms();
       } catch (e: any) {
         setError(`Quickstart failed: ${e.message}`);
       } finally {
         setLoading(false);
+        quickstartRunningRef.current = false;
+        setQuickstartRunning(false);
+        if (quickstartButtonRef.current) {
+          try { quickstartButtonRef.current.disabled = false; } catch (e) { /* ignore */ }
+        }
       }
     });
   };
@@ -322,88 +339,30 @@ export function ZkPorrinhaGame({
     ? currentRoom?.player1.has_committed 
     : currentRoom?.player2?.has_committed;
   
-  const formatXLM = (stroops: bigint | number): string => {
-    return (Number(stroops) / 10000000).toFixed(1);
-  };
+  const formatXLM = (stroops: bigint | number): string => formatXLMService(stroops);
   
   return (
-    <div className="game-container">
-      <div className="game-header">
-        <h2>🎲 ZK Porrinha</h2>
-        <p className="game-subtitle">Zero-knowledge hand game with instant results and jackpot</p>
+    <PixelLayout
+      statusLeft={
+        (isGeneratingProof || quickstartRunning) ? (
+          <span className="text-yellow-300 flex items-center">
+            <Spinner />
+            <span>› Gerando Prova ZK...</span>
+          </span>
+        ) : (
+          `Room: ${currentRoomId ? currentRoomId.toString() : '-'}`
+        )
+      }
+      statusRight={`Studio • ZK Porrinha`}
+    >
+      <div className="game-header bg-[#5c4033] border-b-4 border-black text-white text-center py-3 px-2">
+        <h2 className="text-lg font-bold uppercase tracking-wider">🎲 ZK Porrinha</h2>
+        <p className="game-subtitle text-xs mt-1 opacity-90">Zero-knowledge hand game with instant results and jackpot</p>
       </div>
+      <LogPanel uiLog={uiLog} onClear={() => setUiLog([])} onToggleTransfers={() => setShowTransfers(s => !s)} showTransfers={showTransfers} />
       
-      {/* Player Balances Panel */}
-      {currentRoom && (
-        <div
-          style={{
-            marginBottom: '1.5rem',
-            padding: '1rem',
-            backgroundColor: '#f9fafb',
-            borderRadius: '12px',
-            border: '2px solid #e5e7eb',
-          }}
-        >
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
-            <h3 style={{ margin: 0, fontSize: '16px', color: '#374151' }}>💰 Saldos dos Jogadores</h3>
-            <div
-              style={{
-                padding: '6px 12px',
-                backgroundColor: '#dbeafe',
-                borderRadius: '6px',
-                fontSize: '14px',
-                fontWeight: 'bold',
-                color: '#1e40af',
-              }}
-            >
-              Aposta: {formatXLM(currentRoom.bet_amount)} XLM
-            </div>
-          </div>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-              <div style={{ fontSize: '12px', color: '#6b7280', fontWeight: '600' }}>
-                Player 1 {isPlayer1 && '(Você)'}
-              </div>
-              <BalanceDisplay
-                address={currentRoom.player1.address}
-                highlight={isPlayer1}
-              />
-            </div>
-            {currentRoom.has_player2 && (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                <div style={{ fontSize: '12px', color: '#6b7280', fontWeight: '600' }}>
-                  Player 2 {isPlayer2 && '(Você)'}
-                </div>
-                <BalanceDisplay
-                  address={currentRoom.player2.address}
-                  highlight={isPlayer2}
-                />
-              </div>
-            )}
-          </div>
-          {currentRoom.jackpot_pool > 0 && (
-            <div
-              style={{
-                marginTop: '1rem',
-                padding: '8px 12px',
-                backgroundColor: '#fef3c7',
-                borderRadius: '8px',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                gap: '8px',
-                fontSize: '14px',
-                fontWeight: '600',
-                color: '#92400e',
-              }}
-            >
-              🎰 Jackpot: {formatXLM(currentRoom.jackpot_pool)} XLM
-            </div>
-          )}
-        </div>
-      )}
+      <PlayerBalances currentRoom={currentRoom} myAddress={userAddress} />
       
-      {/* Transfer Animations */}
       {showTransfers && (
         <TransferQueue
           transfers={transfers}
@@ -414,7 +373,6 @@ export function ZkPorrinhaGame({
         />
       )}
       
-      {/* Messages */}
       {error && (
         <div className="notice error" style={{ marginBottom: '1rem' }}>
           ❌ {error}
@@ -456,12 +414,12 @@ export function ZkPorrinhaGame({
               <div className="value">{formatXLM(currentRoom.bet_amount)} XLM</div>
             </div>
             <div>
-              <div className="label">Jackpot Pool</div>
-              <div className="value">{formatXLM(currentRoom.jackpot_pool)} XLM</div>
+              <div className="label">Total Pot</div>
+              <div className="value">{formatXLM(BigInt(currentRoom.bet_amount) * 2n)} XLM</div>
             </div>
             <div>
-              <div className="label">Jackpot Number</div>
-              <div className="value">{Number(currentRoom.jackpot_accumulated) % 100}</div>
+              <div className="label">Session ID</div>
+              <div className="value">#{currentRoom.session_id || 0}</div>
             </div>
           </div>
           
@@ -490,9 +448,9 @@ export function ZkPorrinhaGame({
             </div>
           </div>
           
-          {currentRoom.last_winner && (
+          {roomPhase === 'settled' && (
             <div className="notice success" style={{ marginTop: '1rem' }}>
-              🏆 Winner: {currentRoom.last_winner}
+              � Game Settled! Check transaction for results.
             </div>
           )}
           
@@ -512,91 +470,81 @@ export function ZkPorrinhaGame({
       {roomPhase === 'lobby' && !currentRoom && (
         <div style={{ display: 'grid', gap: '1.5rem' }}>
           {quickstartAvailable && (
-            <div className="card highlight">
-              <h3>⚡ Quickstart (Dev Mode)</h3>
-              <p style={{ color: 'var(--color-ink-muted)', marginTop: '0.5rem', marginBottom: '1rem' }}>
-                Auto-create room with Player 1 and auto-join with Player 2
-              </p>
-              <button
-                onClick={handleQuickstart}
-                disabled={loading}
-                className="button primary"
-                style={{ width: '100%' }}
-              >
-                {loading ? 'Starting...' : '⚡ Quickstart Game'}
-              </button>
-            </div>
+            <QuickstartCard
+              quickstartAvailable={quickstartAvailable}
+              isQuickstarting={quickstartRunning}
+              onQuickstart={handleQuickstart}
+              quickstartButtonRef={quickstartButtonRef}
+            />
           )}
-          
-          <div className="card">
-            <h3>Create New Room</h3>
-            <div style={{ marginTop: '1rem' }}>
-              <label className="label">Bet Amount (stroops)</label>
-              <input
-                type="number"
-                value={betAmount}
-                onChange={(e) => setBetAmount(e.target.value)}
-                className="input"
-                style={{ marginTop: '0.5rem' }}
-              />
-              <div style={{ fontSize: '0.875rem', color: 'var(--color-ink-muted)', marginTop: '0.25rem' }}>
-                = {formatXLM(BigInt(betAmount || '0'))} XLM
-              </div>
-              <button
-                onClick={handleCreateRoom}
-                disabled={loading}
-                className="button primary"
-                style={{ marginTop: '1rem', width: '100%' }}
-              >
-                {loading ? 'Creating...' : 'Create Room'}
-              </button>
-            </div>
-          </div>
-          
-          <div className="card">
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
-              <h3>Available Rooms</h3>
-              <button
-                onClick={loadRooms}
-                className="button secondary small"
-              >
-                🔄 Refresh
-              </button>
-            </div>
-            <div style={{ maxHeight: '400px', overflowY: 'auto' }}>
-              {rooms.length === 0 && (
-                <p style={{ color: 'var(--color-ink-muted)', textAlign: 'center', padding: '2rem' }}>
-                  No rooms available. Create one above!
-                </p>
-              )}
-              {rooms.map(({ id, room }) => {
-                if (!room) return null;
-                const status = (room.status as any).tag;
-                const needsPlayer2 = !room.has_player2 && status === 'Lobby';
-                const canJoin = needsPlayer2 && room.player1.address !== userAddress;
-                
-                return (
-                  <div key={id.toString()} className="list-item" style={{ marginBottom: '0.5rem' }}>
-                    <div>
-                      <div className="value">Room #{id.toString()}</div>
-                      <div style={{ fontSize: '0.875rem', color: 'var(--color-ink-muted)', marginTop: '0.25rem' }}>
-                        Bet: {formatXLM(room.bet_amount)} XLM • Status: {status}
-                      </div>
-                    </div>
-                    {canJoin && (
-                      <button
-                        onClick={() => handleJoinRoom(id)}
-                        disabled={loading}
-                        className="button success small"
-                      >
-                        Join
-                      </button>
-                    )}
+
+          {!ONLY_QUICKSTART && (
+            <>
+              <div className="card">
+                <h3>Create New Room</h3>
+                <div style={{ marginTop: '1rem' }}>
+                  <label className="label">Bet Amount (stroops)</label>
+                  <input
+                    type="number"
+                    value={betAmount}
+                    onChange={(e) => setBetAmount(e.target.value)}
+                    className="input"
+                    style={{ marginTop: '0.5rem' }}
+                  />
+                  <div style={{ fontSize: '0.875rem', color: 'var(--color-ink-muted)', marginTop: '0.25rem' }}>
+                    = {formatXLM(BigInt(betAmount || '0'))} XLM
                   </div>
-                );
-              })}
-            </div>
-          </div>
+                  <button
+                    onClick={handleCreateRoom}
+                    disabled={loading}
+                    className="w-full bg-[#22c55e] border-4 border-black text-white font-bold py-3 rounded-md shadow-[4px_4px_0px_0px_#166534]"
+                  >
+                    {loading ? 'Creating...' : 'Create Room'}
+                  </button>
+                </div>
+              </div>
+
+              <div className="card">
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+                  <h3>Available Rooms</h3>
+                  <button
+                    onClick={loadRooms}
+                    className="button secondary small"
+                  >
+                    🔄 Refresh
+                  </button>
+                </div>
+                <div style={{ maxHeight: '400px', overflowY: 'auto' }}>
+                  {rooms.length === 0 && (
+                    <p style={{ color: 'var(--color-ink-muted)', textAlign: 'center', padding: '2rem' }}>
+                      No rooms available. Create one above!
+                    </p>
+                  )}
+                  {rooms.map(({ id, room }) => {
+                    if (!room) return null;
+                    const status = (room.status as any).tag;
+                    const needsPlayer2 = !room.has_player2 && status === 'Lobby';
+                    
+                    return (
+                      <div key={id.toString()} className="room-row border-b py-2">
+                        <div className="flex justify-between items-center">
+                          <div>
+                            <div className="font-bold">Room {id.toString()}</div>
+                            <div className="text-xs text-gray-400">Status: {status}</div>
+                          </div>
+                          <div className="flex gap-2">
+                            {needsPlayer2 && (
+                              <button onClick={() => handleJoinRoom(id)} className="button primary small">Join</button>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            </>
+          )}
         </div>
       )}
       
@@ -605,112 +553,67 @@ export function ZkPorrinhaGame({
         <div className="card">
           <h3>Commit Phase</h3>
           {!hasCommitted ? (
-            <div style={{ marginTop: '1rem' }}>
-              <div style={{ marginBottom: '1.5rem' }}>
+            <div className="mt-4 space-y-4">
+              <div>
                 <label className="label">Select Hand (0-5 fingers)</label>
-                <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.5rem' }}>
-                  {[0, 1, 2, 3, 4, 5].map((num) => (
+                <div className="grid grid-cols-4 gap-3 mt-2">
+                  {[0, 1, 2, 3].map((num) => (
                     <button
                       key={num}
                       onClick={() => setSelectedHand(num)}
-                      style={{ 
-                        flex: 1, 
-                        padding: '1rem',
-                        backgroundColor: selectedHand === num ? '#3b82f6' : '#374151',
-                        color: 'white',
-                        border: selectedHand === num ? '3px solid #60a5fa' : '1px solid #4b5563',
-                        borderRadius: '0.5rem',
-                        fontSize: '1.2rem',
-                        fontWeight: selectedHand === num ? 'bold' : 'normal',
-                        cursor: 'pointer',
-                        transform: selectedHand === num ? 'scale(1.05)' : 'scale(1)',
-                        transition: 'all 0.2s'
-                      }}
+                      className={
+                        `aspect-square border-4 border-black rounded-sm flex items-center justify-center text-2xl font-bold cursor-pointer ` +
+                        (selectedHand === num
+                          ? 'bg-[#FFC107] text-black shadow-[4px_4px_0px_0px_rgba(0,0,0,1)]'
+                          : 'bg-[#E3C099] text-black')
+                      }
                     >
                       {num} {selectedHand === num && '✓'}
                     </button>
                   ))}
                 </div>
-                <p style={{ marginTop: '0.5rem', color: '#9ca3af', fontSize: '0.9rem' }}>
-                  Selected: <strong style={{ color: '#60a5fa' }}>{selectedHand}</strong>
-                </p>
+                <p className="mt-2 text-sm text-[#9ca3af]">Selected: <strong className="text-[#60a5fa]">{selectedHand}</strong></p>
               </div>
-              
-              <div style={{ marginBottom: '1.5rem' }}>
+
+              <div>
                 <label className="label">Select Parity Guess</label>
-                <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.5rem' }}>
+                <div className="flex gap-3 mt-2">
                   <button
                     onClick={() => setSelectedParity(1)}
-                    style={{ 
-                      flex: 1, 
-                      padding: '1rem',
-                      backgroundColor: selectedParity === 0 ? '#8b5cf6' : '#374151',
-                      color: 'white',
-                      border: selectedParity === 0 ? '3px solid #a78bfa' : '1px solid #4b5563',
-                      borderRadius: '0.5rem',
-                      fontSize: '1.1rem',
-                      fontWeight: selectedParity === 0 ? 'bold' : 'normal',
-                      cursor: 'pointer',
-                      transform: selectedParity === 0 ? 'scale(1.05)' : 'scale(1)',
-                      transition: 'all 0.2s'
-                    }}
-                    >
+                    className={`flex-1 border-4 border-black py-3 rounded-sm font-bold ${selectedParity === 1 ? 'bg-[#FFC107] text-black' : 'bg-[#E3C099] text-black'}`}
+                  >
                     Odd (1) {selectedParity === 1 && '✓'}
                   </button>
                   <button
                     onClick={() => setSelectedParity(0)}
-                    style={{ 
-                      flex: 1, 
-                      padding: '1rem',
-                      backgroundColor: selectedParity === 1 ? '#8b5cf6' : '#374151',
-                      color: 'white',
-                      border: selectedParity === 1 ? '3px solid #a78bfa' : '1px solid #4b5563',
-                      borderRadius: '0.5rem',
-                      fontSize: '1.1rem',
-                      fontWeight: selectedParity === 1 ? 'bold' : 'normal',
-                      cursor: 'pointer',
-                      transform: selectedParity === 1 ? 'scale(1.05)' : 'scale(1)',
-                      transition: 'all 0.2s'
-                    }}
-                    >
+                    className={`flex-1 border-4 border-black py-3 rounded-sm font-bold ${selectedParity === 0 ? 'bg-[#FFC107] text-black' : 'bg-[#E3C099] text-black'}`}
+                  >
                     Even (0) {selectedParity === 0 && '✓'}
                   </button>
                 </div>
-                <p style={{ marginTop: '0.5rem', color: '#9ca3af', fontSize: '0.9rem' }}>
-                  Selected: <strong style={{ color: '#a78bfa' }}>{selectedParity === 1 ? 'Odd (1)' : 'Even (0)'}</strong>
-                </p>
+                <p className="mt-2 text-sm text-[#9ca3af]">Selected: <strong className="text-[#a78bfa]">{selectedParity === 1 ? 'Odd (1)' : 'Even (0)'}</strong></p>
               </div>
-              
-              <div style={{ marginBottom: '1.5rem' }}>
+
+              <div>
                 <label className="label">Guess Total (Sum of Both Hands)</label>
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)', gap: '0.5rem', marginTop: '0.5rem' }}>
-                  {[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(num => (
+                <div className="grid grid-cols-6 gap-2 mt-2">
+                  {[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((num) => (
                     <button
                       key={num}
                       onClick={() => setSelectedTotalGuess(num)}
-                      style={{
-                        padding: '0.75rem',
-                        backgroundColor: selectedTotalGuess === num ? '#10b981' : '#374151',
-                        color: 'white',
-                        border: selectedTotalGuess === num ? '3px solid #34d399' : '1px solid #4b5563',
-                        borderRadius: '0.5rem',
-                        fontSize: '1rem',
-                        fontWeight: selectedTotalGuess === num ? 'bold' : 'normal',
-                        cursor: 'pointer',
-                        transform: selectedTotalGuess === num ? 'scale(1.05)' : 'scale(1)',
-                        transition: 'all 0.2s'
-                      }}
+                      className={
+                        `aspect-square border-4 border-black rounded-sm flex items-center justify-center font-bold ` +
+                        (selectedTotalGuess === num ? 'bg-[#10b981] text-white shadow-[4px_4px_0px_0px_#065f46]' : 'bg-[#E3C099] text-black')
+                      }
                     >
                       {num} {selectedTotalGuess === num && '✓'}
                     </button>
                   ))}
                 </div>
-                <p style={{ marginTop: '0.5rem', color: '#9ca3af', fontSize: '0.9rem' }}>
-                  Selected: <strong style={{ color: '#34d399' }}>{selectedTotalGuess}</strong>
-                </p>
+                <p className="mt-2 text-sm text-[#9ca3af]">Selected: <strong className="text-[#34d399]">{selectedTotalGuess}</strong></p>
               </div>
-              
-              <div className="notice info" style={{ marginBottom: '1rem' }}>
+
+              <div className="bg-[#E3C099] border-4 border-black p-3 rounded-md text-sm">
                 <strong>🔐 Commit-Reveal Protocol</strong><br />
                 <strong>1. Commit:</strong> Both players lock in their choices with ZK proofs (hands stay hidden)<br />
                 <strong>2. Reveal:</strong> After both commit, players reveal to determine the winner<br />
@@ -718,12 +621,11 @@ export function ZkPorrinhaGame({
                 <br />
                 ℹ️ Your choices will be hidden using zero-knowledge cryptography until both players commit.
               </div>
-              
+
               <button
                 onClick={handleCommit}
                 disabled={loading}
-                className="button primary"
-                style={{ width: '100%' }}
+                className="w-full bg-[#22c55e] border-4 border-black text-white font-bold py-5 rounded-md shadow-[4px_4px_0px_0px_#166534]"
               >
                 {loading ? 'Generating Proof & Committing...' : '🔒 Commit Hand'}
               </button>
@@ -739,6 +641,20 @@ export function ZkPorrinhaGame({
           )}
         </div>
       )}
+
+      {/* If both players committed, show Reveal/Resolve panel to allow proof generation */}
+      {roomPhase === 'commit' && currentRoom && currentRoom.player1.has_committed && currentRoom.player2?.has_committed && (
+        <div className="mt-4">
+          <RevealForm
+            roomId={currentRoomId}
+            myAddress={userAddress}
+            mySecretAvailable={!!loadSecret(currentRoomId!, userAddress)}
+            onResolve={async (otherHand, otherSaltHex) => {
+              await handleResolve(otherHand, otherSaltHex);
+            }}
+          />
+        </div>
+      )}
       
       {/* Phase: Settled (Results) */}
       {roomPhase === 'settled' && currentRoom && (
@@ -746,132 +662,79 @@ export function ZkPorrinhaGame({
           <div style={{ fontSize: '4rem', marginBottom: '1rem' }}>🎉</div>
           <h2 style={{ marginBottom: '2rem' }}>Game Complete!</h2>
           
-          {/* Winner Info */}
-          {currentRoom.last_winner ? (
-            <div style={{ 
-              marginBottom: '2rem', 
-              padding: '1.5rem', 
-              backgroundColor: currentRoom.last_winner === userAddress ? '#10b981' : '#3b82f6', 
-              borderRadius: '0.5rem',
-              color: 'white'
-            }}>
-              <div style={{ fontSize: '1.5rem', marginBottom: '0.5rem', fontWeight: 'bold' }}>
-                {currentRoom.last_winner === userAddress ? '🏆 YOU WON! 🏆' : '🎮 Winner'}
-              </div>
-              <div style={{ 
-                fontFamily: 'monospace', 
-                fontSize: '0.85rem',
-                wordBreak: 'break-all',
-                opacity: 0.9
-              }}>
-                {currentRoom.last_winner}
-              </div>
-              {currentRoom.last_winner === userAddress && (
-                <div style={{ marginTop: '0.75rem', fontSize: '1.2rem', fontWeight: 'bold' }}>
-                  🎊 Congratulations! 🎊
-                </div>
-              )}
-            </div>
-          ) : (
-            <div style={{ 
-              marginBottom: '2rem', 
-              padding: '1.5rem', 
-              backgroundColor: '#6b7280', 
-              borderRadius: '0.5rem',
-              color: 'white'
-            }}>
-              <div style={{ fontSize: '1.2rem' }}>🤝 Draw / No Winner</div>
-            </div>
-          )}
-          
-          {/* Game Details */}
+          {/* Nota: Winner e revealed hands não disponíveis on-chain (ZK proof mantém privacidade) */}
           <div style={{ 
-            display: 'grid', 
-            gridTemplateColumns: '1fr 1fr', 
-            gap: '1rem', 
-            marginBottom: '2rem',
-            textAlign: 'left'
+            marginBottom: '2rem', 
+            padding: '1.5rem', 
+            backgroundColor: '#3b82f6', 
+            borderRadius: '0.5rem',
+            color: 'white'
           }}>
-            <div style={{ 
-              padding: '1rem', 
-              backgroundColor: currentRoom.player1.address === userAddress ? '#1e40af' : '#1f2937',
-              borderRadius: '0.5rem',
-              border: currentRoom.last_winner === currentRoom.player1.address ? '3px solid #fbbf24' : 'none'
-            }}>
-              <div style={{ 
-                color: '#9ca3af', 
-                fontSize: '0.9rem',
-                marginBottom: '0.25rem'
-              }}>
-                Player 1 {currentRoom.player1.address === userAddress && '(You)'}
+            <div style={{ fontSize: '1.5rem', marginBottom: '0.5rem', fontWeight: 'bold' }}>
+              🎮 Game Resolved!
+            </div>
+            <div style={{ fontSize: '0.95rem', opacity: 0.9 }}>
+              The game was settled on-chain using zero-knowledge proofs.<br/>
+              Check the transaction hash for payout details.
+            </div>
+          </div>
+
+          {/* Game Info */}
+          <div style={{ marginBottom: '2rem', textAlign: 'left', backgroundColor: '#1f2937', padding: '1.5rem', borderRadius: '0.5rem' }}>
+            <div style={{ marginBottom: '1rem', fontSize: '1.1rem', fontWeight: 'bold' }}>Game Details</div>
+            <div style={{ display: 'grid', gap: '0.75rem' }}>
+              <div>
+                <span style={{ opacity: 0.7 }}>Bet Amount:</span> {formatXLM(currentRoom.bet_amount)} XLM
               </div>
-              <div style={{ fontSize: '2rem', fontWeight: 'bold', color: '#60a5fa' }}>
-                {typeof currentRoom.player1.revealed_hand === 'number' 
-                  ? currentRoom.player1.revealed_hand 
-                  : '?'}
+              <div>
+                <span style={{ opacity: 0.7 }}>Total Pot:</span> {formatXLM(BigInt(currentRoom.bet_amount) * 2n)} XLM
               </div>
-              <div style={{ fontSize: '0.85rem', color: '#9ca3af', marginTop: '0.25rem' }}>
-                {typeof currentRoom.player1.revealed_parity === 'number'
-                  ? (currentRoom.player1.revealed_parity === 1 ? '📊 Guessed Odd' : '📊 Guessed Even')
-                  : 'Not revealed'}
+              <div>
+                <span style={{ opacity: 0.7 }}>Session ID:</span> #{currentRoom.session_id}
               </div>
             </div>
-            
-            <div style={{ 
-              padding: '1rem', 
-              backgroundColor: currentRoom.player2?.address === userAddress ? '#1e40af' : '#1f2937',
-              borderRadius: '0.5rem',
-              border: currentRoom.last_winner === currentRoom.player2?.address ? '3px solid #fbbf24' : 'none'
-            }}>
-              <div style={{ 
-                color: '#9ca3af', 
-                fontSize: '0.9rem',
-                marginBottom: '0.25rem'
-              }}>
-                Player 2 {currentRoom.player2?.address === userAddress && '(You)'}
+          </div>
+
+          {/* Players (without revealed data) */}
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', marginBottom: '2rem' }}>
+            <div className="player-info" style={{ padding: '1rem', backgroundColor: '#1f2937', borderRadius: '0.5rem' }}>
+              <div style={{ fontWeight: 'bold', marginBottom: '0.5rem' }}>
+                Player 1 {userAddress === currentRoom.player1.address && '(You)'}
               </div>
-              <div style={{ fontSize: '2rem', fontWeight: 'bold', color: '#a78bfa' }}>
-                {typeof currentRoom.player2?.revealed_hand === 'number'
-                  ? currentRoom.player2.revealed_hand 
-                  : '?'}
+              <div style={{ fontSize: '0.75rem', fontFamily: 'monospace', opacity: 0.7 }}>
+                {currentRoom.player1.address.substring(0, 10)}...
               </div>
-              <div style={{ fontSize: '0.85rem', color: '#9ca3af', marginTop: '0.25rem' }}>
-                {typeof currentRoom.player2?.revealed_parity === 'number'
-                  ? (currentRoom.player2.revealed_parity === 1 ? '📊 Guessed Odd' : '📊 Guessed Even')
-                  : 'Not revealed'}
+              <div style={{ marginTop: '0.5rem', fontSize: '0.85rem' }}>
+                ✅ Committed
               </div>
             </div>
-            
-            <div style={{ 
-              padding: '1.25rem', 
-              backgroundColor: '#0f172a', 
-              borderRadius: '0.5rem',
-              gridColumn: '1 / -1',
-              border: '2px solid #fbbf24'
-            }}>
-              <div style={{ color: '#fbbf24', fontSize: '0.9rem', fontWeight: 'bold' }}>🎲 Total Fingers</div>
-              <div style={{ fontSize: '2.5rem', fontWeight: 'bold', color: '#fbbf24', marginTop: '0.5rem' }}>
-                {(() => {
-                  const p1 = typeof currentRoom.player1.revealed_hand === 'number' ? currentRoom.player1.revealed_hand : 0;
-                  const p2 = typeof currentRoom.player2?.revealed_hand === 'number' ? currentRoom.player2.revealed_hand : 0;
-                  return p1 + p2;
-                })()}
+            <div className="player-info" style={{ padding: '1rem', backgroundColor: '#1f2937', borderRadius: '0.5rem' }}>
+              <div style={{ fontWeight: 'bold', marginBottom: '0.5rem' }}>
+                Player 2 {userAddress === currentRoom.player2.address && '(You)'}
               </div>
-              <div style={{ fontSize: '1rem', color: '#fbbf24', marginTop: '0.5rem', fontWeight: 'bold' }}>
-                {(() => {
-                  const p1 = typeof currentRoom.player1.revealed_hand === 'number' ? currentRoom.player1.revealed_hand : 0;
-                  const p2 = typeof currentRoom.player2?.revealed_hand === 'number' ? currentRoom.player2.revealed_hand : 0;
-                  const total = p1 + p2;
-                  return total % 2 === 0 ? '✅ EVEN' : '✅ ODD';
-                })()}
+              <div style={{ fontSize: '0.75rem', fontFamily: 'monospace', opacity: 0.7 }}>
+                {currentRoom.player2.address.substring(0, 10)}...
               </div>
+              <div style={{ marginTop: '0.5rem', fontSize: '0.85rem' }}>
+                ✅ Committed
+              </div>
+            </div>
+          </div>
+
+          {/* Result Info */}
+          <div style={{ marginBottom: '2rem', padding: '1rem', backgroundColor: '#065f46', borderRadius: '0.5rem', color: 'white' }}>
+            <div style={{ fontSize: '1.1rem', fontWeight: 'bold', marginBottom: '0.5rem' }}>
+              🔐 Zero-Knowledge Privacy
+            </div>
+            <div style={{ fontSize: '0.9rem', opacity: 0.9 }}>
+              Hands were never revealed on-chain. Winner determined via ZK proof.
             </div>
           </div>
           
           <button
             onClick={handleStartNewGame}
-            className="button primary"
-            style={{ width: '100%', padding: '1rem', fontSize: '1.1rem' }}
+            className="w-full bg-[#22c55e] border-4 border-black text-white font-bold py-3 rounded-md shadow-[4px_4px_0px_0px_#166534]"
+            style={{ fontSize: '1.1rem' }}
           >
             ← Back to Lobby
           </button>
@@ -895,6 +758,6 @@ export function ZkPorrinhaGame({
           </button>
         </div>
       )}
-    </div>
+    </PixelLayout>
   );
 }

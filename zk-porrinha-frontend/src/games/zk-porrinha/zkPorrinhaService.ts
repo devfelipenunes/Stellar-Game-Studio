@@ -1,16 +1,29 @@
-import { Client as ZkPorrinhaClient, type Room } from './bindings';
-import { config } from '@/config';
-import { NETWORK_PASSPHRASE, RPC_URL } from '@/utils/constants';
-import { contract } from '@stellar/stellar-sdk';
-import { generateMockProof } from './mockProver';
-import { generateRealProof, saltToBytes32 } from './realProver';
-import { Buffer } from 'buffer';
+import { Client as ZkPorrinhaClient, type Room } from "./bindings";
+import { config } from "@/config";
+import { NETWORK_PASSPHRASE, RPC_URL } from "@/utils/constants";
+import { contract } from "@stellar/stellar-sdk";
+import { generateRealProof } from "./realProver";
+import { computeCommitment, commitmentToHex } from './poseidonNoir'; // USE NOIR HASHER
+import { saveSecret } from './secrets';
+import { verifyProofOnChain } from './verifier';
+import { localGameState, type LocalHand } from './localGameState';
 
 type ClientOptions = contract.ClientOptions;
 
-// Using REAL ZK prover with compatible versions
-// Nargo 0.36.0 + noir_js 0.36.0 + backend_barretenberg 0.36.0
-const USE_MOCK_PROVER = false;
+function extractTxHash(sent: any): string {
+  return (
+    sent?.sendTransactionResponse?.hash ||
+    sent?.getTransactionResponse?.hash ||
+    sent?.hash ||
+    "unknown"
+  );
+}
+
+async function signAndSendTx(tx: any) {
+  const sent = await tx.signAndSend();
+  const txHash = extractTxHash(sent);
+  return { sent, txHash };
+}
 
 export class ZkPorrinhaService {
   private baseClient: ZkPorrinhaClient;
@@ -23,13 +36,11 @@ export class ZkPorrinhaService {
       networkPassphrase: NETWORK_PASSPHRASE,
       rpcUrl: RPC_URL,
     });
-    
-    console.log(`[ZkPorrinhaService] Prover mode: ${USE_MOCK_PROVER ? 'MOCK (dev)' : 'REAL (production)'}`);
   }
 
   private createSigningClient(
     publicKey: string,
-    signer: Pick<ClientOptions, 'signTransaction' | 'signAuthEntry'>
+    signer: Pick<ClientOptions, "signTransaction" | "signAuthEntry">,
   ): ZkPorrinhaClient {
     const options: ClientOptions = {
       contractId: this.contractId,
@@ -45,16 +56,16 @@ export class ZkPorrinhaService {
     try {
       const tx = await this.baseClient.get_room({ room_id: roomId });
       const res = await tx.simulate();
-      
-      if (res.result && typeof (res.result as any).isOk === 'function') {
+
+      if (res.result && typeof (res.result as any).isOk === "function") {
         if ((res.result as any).isOk()) {
           return (res.result as any).unwrap();
         }
       }
-      
+
       return null;
     } catch (e) {
-      console.error('[ZkPorrinhaService] getRoom failed', e);
+      console.error("[ZkPorrinhaService] getRoom failed", e);
       return null;
     }
   }
@@ -65,57 +76,44 @@ export class ZkPorrinhaService {
       const res = await tx.simulate();
       return res.result as bigint;
     } catch (e) {
-      console.error('[ZkPorrinhaService] getRoomCount failed', e);
+      console.error("[ZkPorrinhaService] getRoomCount failed", e);
       return 0n;
     }
   }
 
-  async listRecentRooms(limit = 10): Promise<Array<{ id: bigint; room: Room | null }>> {
+  async listRecentRooms(
+    limit = 10,
+  ): Promise<Array<{ id: bigint; room: Room | null }>> {
     const total = await this.getRoomCount();
     const count = Number(total);
     if (count === 0) return [];
-    
+
     const start = Math.max(1, count - limit + 1);
-    const ids = Array.from({ length: count - start + 1 }, (_, i) => BigInt(start + i));
-    
-    const rows = await Promise.all(
-      ids.map(async (id) => ({ id, room: await this.getRoom(id) }))
+    const ids = Array.from({ length: count - start + 1 }, (_, i) =>
+      BigInt(start + i),
     );
-    
+
+    const rows = await Promise.all(
+      ids.map(async (id) => ({ id, room: await this.getRoom(id) })),
+    );
+
     return rows.reverse();
   }
 
   async createRoom(
     playerAddress: string,
-    signer: Pick<ClientOptions, 'signTransaction' | 'signAuthEntry'>,
-    betAmount: bigint
+    signer: Pick<ClientOptions, "signTransaction" | "signAuthEntry">,
+    betAmount: bigint,
   ): Promise<{ roomId: bigint; txHash: string } | null> {
     try {
-      console.log('[🎮 ZK-Porrinha] Creating room...');
-      console.log('  Player:', playerAddress);
-      console.log('  Bet Amount:', betAmount.toString(), 'stroops (', (Number(betAmount) / 10_000_000).toFixed(1), 'XLM )');
-      
       const client = this.createSigningClient(playerAddress, signer);
-      
       const tx = await client.create_room({
         player: playerAddress,
         bet_amount: betAmount,
       });
-      
-      const sent = await tx.signAndSend();
-      
-      // Extract TX hash from Stellar SDK response
-      const txHash = (sent as any).sendTransactionResponse?.hash 
-        || (sent as any).getTransactionResponse?.hash
-        || (sent as any).hash 
-        || 'unknown';
-      
-      console.log('[✅ Room Created]');
-      console.log('  TX Hash:', txHash);
-      console.log('  TX Explorer:', `https://stellar.expert/explorer/testnet/tx/${txHash}`);
-      
+      const { sent, txHash } = await signAndSendTx(tx);
       let roomId: bigint;
-      if (sent.result && typeof (sent.result as any).isOk === 'function') {
+      if (sent.result && typeof (sent.result as any).isOk === "function") {
         if ((sent.result as any).isOk()) {
           roomId = (sent.result as any).unwrap() as bigint;
         } else {
@@ -124,13 +122,9 @@ export class ZkPorrinhaService {
       } else {
         roomId = sent.result as unknown as bigint;
       }
-      
-      console.log('  Room ID:', roomId.toString());
-      console.log('  💰 Deposited:', (Number(betAmount) / 10_000_000).toFixed(1), 'XLM');
-      
       return { roomId, txHash };
     } catch (e) {
-      console.error('[❌ ZkPorrinhaService] createRoom failed', e);
+      console.error("[ZkPorrinhaService] createRoom failed", e);
       return null;
     }
   }
@@ -138,44 +132,20 @@ export class ZkPorrinhaService {
   async joinRoom(
     roomId: bigint,
     playerAddress: string,
-    signer: Pick<ClientOptions, 'signTransaction' | 'signAuthEntry'>
+    signer: Pick<ClientOptions, "signTransaction" | "signAuthEntry">,
   ): Promise<{ success: boolean; txHash?: string; betAmount?: bigint }> {
     try {
       const room = await this.getRoom(roomId);
-      if (!room) {
-        throw new Error('Room not found');
-      }
-      
-      console.log('[🎮 ZK-Porrinha] Joining room...');
-      console.log('  Room ID:', roomId.toString());
-      console.log('  Player:', playerAddress);
-      console.log('  Bet Amount:', room.bet_amount.toString(), 'stroops (', (Number(room.bet_amount) / 10_000_000).toFixed(1), 'XLM )');
-      
+      if (!room) throw new Error("Room not found");
       const client = this.createSigningClient(playerAddress, signer);
-      
       const tx = await client.join_room({
         room_id: roomId,
         player: playerAddress,
       });
-      
-      const sent = await tx.signAndSend();
-      
-      // Extract TX hash from Stellar SDK response
-      const txHash = (sent as any).sendTransactionResponse?.hash 
-        || (sent as any).getTransactionResponse?.hash
-        || (sent as any).hash 
-        || 'unknown';
-      
-      console.log('[✅ Joined Room]');
-      console.log('  TX Hash:', txHash);
-      console.log('  TX Explorer:', `https://stellar.expert/explorer/testnet/tx/${txHash}`);
-      console.log('  💰 Deposited:', (Number(room.bet_amount) / 10_000_000).toFixed(1), 'XLM');
-      console.log('  🎲 Total Prize Pool:', (Number(room.bet_amount) * 2 / 10_000_000).toFixed(1), 'XLM');
-      console.log('  🏆 Winner takes:', (Number(room.bet_amount) * 2 / 10_000_000).toFixed(1), 'XLM + Jackpot (if hit)');
-      
+      const { txHash } = await signAndSendTx(tx);
       return { success: true, txHash, betAmount: room.bet_amount };
     } catch (e) {
-      console.error('[❌ ZkPorrinhaService] joinRoom failed', e);
+      console.error("[ZkPorrinhaService] joinRoom failed", e);
       return { success: false };
     }
   }
@@ -183,130 +153,226 @@ export class ZkPorrinhaService {
   async commitHandWithProof(
     roomId: bigint,
     playerAddress: string,
-    signer: Pick<ClientOptions, 'signTransaction' | 'signAuthEntry'>,
+    signer: Pick<ClientOptions, "signTransaction" | "signAuthEntry">,
     hand: number,
     parity: number,
-    totalGuess: number
+    totalGuess: number,
   ): Promise<{ success: boolean; salt?: string; txHash?: string }> {
     try {
       const room = await this.getRoom(roomId);
-      if (!room) {
-        throw new Error('Room not found');
-      }
-      
-      console.log('[🔐 ZK-Porrinha] Committing hand with ZK proof...');
-      console.log('  Room ID:', roomId.toString());
-      console.log('  Player:', playerAddress);
-      console.log('  Hand:', hand, 'fingers');
-  console.log('  Parity guess:', parity === 1 ? 'ODD (impar)' : 'EVEN (par)');
-      console.log('  Total guess:', totalGuess, 'fingers');
-      
-      const jackpotAccumulated = Number(room.jackpot_accumulated);
-      const jackpotGuess = jackpotAccumulated % 100;
-      
-      console.log('  🎰 Jackpot accumulated (private):', jackpotAccumulated);
-      console.log('  🎯 Jackpot number to guess:', jackpotGuess);
-      console.log('  💎 Current jackpot pool:', (Number(room.jackpot_pool) / 10_000_000).toFixed(1), 'XLM');
-      
-      // Check if player guessed the jackpot correctly (validated by ZK circuit)
-      let jackpotHit = (jackpotGuess === jackpotAccumulated % 100);
+      if (!room) throw new Error("Room not found");
 
-      // Use real or mock prover based on environment
-      let commitment, proof, salt;
+      const { generateSalt } = await import('./realProver');
+      const saltHex = generateSalt();
+      const commitmentBuf = await computeCommitment(hand, saltHex);
+      const commitmentHex = commitmentToHex(commitmentBuf);
 
-      if (USE_MOCK_PROVER) {
-        console.log('[⚡ Mock Prover] Generating instant proof...');
-        const mockResult = await generateMockProof({
-          hand,
-          parity,
-          jackpotGuess,
-          jackpotAccumulated,
-        });
-        commitment = mockResult.commitment;
-        proof = mockResult.proof;
-        salt = mockResult.salt;
-        // In mock mode we keep the locally computed jackpotHit (mock doesn't return it)
-      } else {
-        console.log('[🔮 Real ZK Prover] Generating zero-knowledge proof (may take 2-5s)...');
-        const realResult = await generateRealProof({
-          hand,
-          parity,
-          totalGuess,
-          jackpotGuess,
-          jackpotAccumulated,
-        });
-        commitment = realResult.commitment;
-        proof = realResult.proof;
-        salt = realResult.salt;
-        console.log('[✅ ZK Proof] Generated successfully!');
-        // Override jackpotHit with the value extracted from the proof outputs
-        if (typeof (realResult as any).jackpotHit === 'boolean') {
-          jackpotHit = (realResult as any).jackpotHit;
-        }
-      }
-      
+      saveSecret(roomId, playerAddress, { hand, saltHex });
+
+      const localHand: LocalHand = {
+        roomId,
+        playerAddress,
+        hand,
+        salt: saltHex,
+        commitment: commitmentHex,
+        parityGuess: parity,
+        exactSumGuess: totalGuess,
+        timestamp: Date.now(),
+      };
+      localGameState.saveHand(localHand);
+      console.log('💾 Hand saved locally for auto-resolution');
+
       const client = this.createSigningClient(playerAddress, signer);
-      
-      const commitmentBuffer = commitment.bytes();
-      const proofBuffer = proof.bytes();
-      
-      console.log('[📤 Blockchain] Submitting commitment...');
-      
-      // TODO: These values will eventually be extracted from the proof outputs
-      // For now, we send them as parameters (the ZK proof validates they're correct)
-      const tx = await client.commit_hand({
+      const tx = await client.commit({
         room_id: roomId,
         player: playerAddress,
-        commitment: commitmentBuffer,
-        proof: proofBuffer,
-        hand: hand,
+        commitment: commitmentBuf,
         parity: parity,
-        total_guess: totalGuess,
-        jackpot_hit: jackpotHit,
+        exact_guess: totalGuess,
       });
+      const { txHash } = await signAndSendTx(tx);
       
-      const sent = await tx.signAndSend();
+      console.log('✅ Commit successful, checking for auto-resolve...');
       
-      // Extract TX hash from Stellar SDK response
-      const txHash = (sent as any).sendTransactionResponse?.hash 
-        || (sent as any).getTransactionResponse?.hash
-        || (sent as any).hash 
-        || 'unknown';
-      
-      console.log('[✅ Committed]');
-      console.log('  TX Hash:', txHash);
-      console.log('  TX Explorer:', `https://stellar.expert/explorer/testnet/tx/${txHash}`);
-      console.log('  ✨ Winner will be calculated automatically after both players commit!');
-      
-      return { success: true, salt, txHash };
+      return { success: true, salt: saltHex, txHash };
     } catch (e) {
-      console.error('[❌ ZkPorrinhaService] commitHandWithProof failed', e);
+      console.error("[ZkPorrinhaService] commitHandWithProof failed", e);
       return { success: false };
     }
   }
 
-  async claimTimeout(
+
+  async resolveWithProof(
     roomId: bigint,
-    claimerAddress: string,
-    signer: Pick<ClientOptions, 'signTransaction' | 'signAuthEntry'>
-  ): Promise<boolean> {
+    playerAddress: string,
+    signer: Pick<ClientOptions, "signTransaction" | "signAuthEntry">,
+    mySecret: { hand: number; saltHex: string },
+    otherSecret: { hand: number; saltHex: string },
+    verifyOnChain = true, 
+  ): Promise<{ success: boolean; txHash?: string; verificationResult?: boolean }> {
     try {
-      const client = this.createSigningClient(claimerAddress, signer);
+      const room = await this.getRoom(roomId);
+      if (!room) throw new Error('Room not found');
+
+      const { computePoseidon2Commitment } = await import('./poseidonNoir');
+      const h1Buf = await computePoseidon2Commitment(mySecret.hand, mySecret.saltHex);
+      const h2Buf = await computePoseidon2Commitment(otherSecret.hand, otherSecret.saltHex);
       
-      const tx = await client.claim_timeout({
-        room_id: roomId,
-        claimer: claimerAddress,
+      console.log('[DEBUG] Commitments recalculated locally (not from contract)');
+
+      const proverInput = {
+        hand1: mySecret.hand,
+        salt1Hex: mySecret.saltHex,
+        hand2: otherSecret.hand,
+        salt2Hex: otherSecret.saltHex,
+        h1: h1Buf,
+        h2: h2Buf,
+      };
+
+      console.log('🔐 Generating ZK proof...');
+      console.log('[DEBUG] Prover inputs:', {
+        hand1: proverInput.hand1,
+        salt1: proverInput.salt1Hex.substring(0, 20) + '...',
+        hand2: proverInput.hand2,
+        salt2: proverInput.salt2Hex.substring(0, 20) + '...',
+        h1: Buffer.from(proverInput.h1).toString('hex'),
+        h2: Buffer.from(proverInput.h2).toString('hex'),
       });
       
-      await tx.signAndSend();
-      return true;
+      const { proofBytes, totalSum } = await generateRealProof(proverInput);
+      console.log('✅ Proof generated successfully');
+
+      const nullifierData = Buffer.concat([
+        Buffer.from(roomId.toString()),
+        h1Buf,
+        h2Buf,
+      ]);
+      
+      const hashBuffer = await crypto.subtle.digest('SHA-256', nullifierData);
+      const nullifier = Buffer.from(hashBuffer);
+
+      let verificationResult = false;
+      if (verifyOnChain) {
+        console.log('🔍 Verifying proof on-chain...');
+        const publicInputs = [h1Buf, h2Buf]; // Public commitments
+        verificationResult = await verifyProofOnChain(
+          proofBytes,
+          publicInputs.map(buf => new Uint8Array(buf)),
+          playerAddress
+        );
+        
+        if (!verificationResult) {
+          console.warn('⚠️ On-chain verification failed, but proceeding with game contract...');
+        } else {
+          console.log('✅ Proof verified on-chain successfully');
+        }
+      }
+
+      console.log('📤 Submitting proof to game contract...');
+      const client = this.createSigningClient(playerAddress, signer);
+      const tx = await client.resolve({ 
+        room_id: roomId, 
+        proof: Buffer.from(proofBytes), 
+        total_sum: totalSum,
+        nullifier: nullifier,
+      });
+      const { txHash } = await signAndSendTx(tx);
+      
+      console.log('✅ Proof submitted successfully. TxHash:', txHash);
+      
+      return { success: true, txHash, verificationResult };
     } catch (e) {
-      console.error('[ZkPorrinhaService] claimTimeout failed', e);
-      return false;
+      console.error('[ZkPorrinhaService] resolveWithProof failed', e);
+      return { success: false, verificationResult: false };
+    }
+  }
+
+  async tryAutoResolve(
+    roomId: bigint,
+    currentPlayerAddress: string,
+    signer: Pick<ClientOptions, "signTransaction" | "signAuthEntry">,
+  ): Promise<{ 
+    autoResolved: boolean; 
+    txHash?: string; 
+    error?: string;
+    winner?: string;
+    totalSum?: number;
+  }> {
+    try {
+      const room = await this.getRoom(roomId);
+      if (!room) {
+        return { autoResolved: false, error: 'Room not found' };
+      }
+
+      if (!room.player1.has_committed || !room.player2.has_committed) {
+        console.log('⏳ Waiting for both players to commit...');
+        return { autoResolved: false };
+      }
+
+      const player1Addr = room.player1.address;
+      const player2Addr = room.player2.address;
+      
+      const state = localGameState.canAutoResolve(roomId, player1Addr, player2Addr);
+      
+      if (!state.canResolve || !state.hand1 || !state.hand2) {
+        console.warn('⚠️ Both players committed but hands not found locally. Cannot auto-resolve.');
+        return { autoResolved: false, error: 'Missing local hand data' };
+      }
+
+      console.log('🎲 Both players committed! Auto-resolving game...');
+
+      const result = await this.resolveWithProof(
+        roomId,
+        currentPlayerAddress,
+        signer,
+        { hand: state.hand1.hand, saltHex: state.hand1.salt }, 
+        { hand: state.hand2.hand, saltHex: state.hand2.salt }, 
+        false 
+      );
+
+      if (result.success) {
+        console.log('🎉 Game auto-resolved successfully!');
+        
+        const resolvedRoom = await this.getRoom(roomId);
+        
+        if (resolvedRoom && resolvedRoom.winner) {
+          const winnerAddr = resolvedRoom.winner;
+          const isPlayer1Winner = winnerAddr === resolvedRoom.player1.address;
+          const winnerName = isPlayer1Winner ? 'Player 1' : 'Player 2';
+          const winnerShort = winnerAddr.substring(0, 8) + '...';
+          
+          console.log('🏆 WINNER:', winnerName, winnerShort);
+          console.log('🎲 Total sum revealed:', resolvedRoom.total_sum || 'unknown');
+          console.log('💰 Bet amount:', resolvedRoom.bet_amount, 'stroops per player');
+          console.log('💵 Total pot:', (BigInt(resolvedRoom.bet_amount) * 2n).toString(), 'stroops');
+          
+          console.log('📊 Player 1 guesses:', {
+            parity: resolvedRoom.player1.parity_guess === 0 ? 'Par' : 'Ímpar',
+            exact: resolvedRoom.player1.exact_sum_guess,
+          });
+          console.log('📊 Player 2 guesses:', {
+            parity: resolvedRoom.player2.parity_guess === 0 ? 'Par' : 'Ímpar',
+            exact: resolvedRoom.player2.exact_sum_guess,
+          });
+        }
+        
+        localGameState.clearRoom(roomId);
+        return { 
+          autoResolved: true, 
+          txHash: result.txHash,
+          winner: resolvedRoom?.winner,
+          totalSum: resolvedRoom?.total_sum,
+        };
+      } else {
+        return { autoResolved: false, error: 'Resolution failed' };
+      }
+    } catch (e) {
+      console.error('[ZkPorrinhaService] tryAutoResolve failed', e);
+      return { autoResolved: false, error: String(e) };
     }
   }
 }
 
 export const zkPorrinhaService = new ZkPorrinhaService(
-  config.ZK_PORRINHA_CONTRACT_ID || ''
+  config.ZK_PORRINHA_CONTRACT_ID || "",
 );

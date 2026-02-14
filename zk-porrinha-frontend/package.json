@@ -19,6 +19,7 @@
     "buffer": "^6.0.3",
     "clsx": "^2.1.1",
     "lucide-react": "^0.556.0",
+    "poseidon-lite": "^0.3.0",
     "react": "^19.2.1",
     "react-dom": "^19.2.1",
     "sac-sdk": "^0.4.2",

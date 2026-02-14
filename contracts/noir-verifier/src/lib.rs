@@ -1,6 +1,6 @@
 #![no_std]
 
-use soroban_sdk::{contract, contractimpl, contracterror, Bytes, BytesN, Env, Vec};
+use soroban_sdk::{contract, contractimpl, contracterror, contracttype, Bytes, BytesN, Env, Vec, Symbol};
 
 #[contracterror]
 #[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
@@ -9,6 +9,15 @@ pub enum Error {
     InvalidProof = 1,
     InvalidPublicInputs = 2,
     VerificationFailed = 3,
+    CircuitNotRegistered = 4,
+}
+
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct CircuitInfo {
+    pub circuit_hash: BytesN<32>,
+    pub name: Symbol,
+    pub version: u32,
 }
 
 #[contract]
@@ -16,7 +25,9 @@ pub struct NoirVerifier;
 
 #[contractimpl]
 impl NoirVerifier {
-
+    /// Verify a proof with circuit validation
+    /// In production, this should call Barretenberg verification
+    /// For testnet, we do structural validation + circuit registry check
     pub fn verify(env: Env, proof: Bytes, public_inputs: Vec<BytesN<32>>) -> bool {
         if proof.len() == 0 {
             env.events().publish(
@@ -63,6 +74,55 @@ impl NoirVerifier {
 
         verification_result
     }
+
+    /// Register a circuit for verification
+    pub fn register_circuit(
+        env: Env,
+        circuit_hash: BytesN<32>,
+        name: Symbol,
+        version: u32,
+    ) {
+        let info = CircuitInfo {
+            circuit_hash: circuit_hash.clone(),
+            name: name.clone(),
+            version,
+        };
+        
+        env.storage().instance().set(&circuit_hash, &info);
+        
+        env.events().publish(
+            (soroban_sdk::symbol_short!("circuit"),),
+            (circuit_hash, name, version)
+        );
+    }
+
+    /// Get circuit info by hash
+    pub fn get_circuit(env: Env, circuit_hash: BytesN<32>) -> Option<CircuitInfo> {
+        env.storage().instance().get(&circuit_hash)
+    }
+
+    /// Verify proof with circuit hash validation
+    pub fn verify_with_circuit(
+        env: Env,
+        proof: Bytes,
+        public_inputs: Vec<BytesN<32>>,
+        circuit_hash: BytesN<32>,
+    ) -> bool {
+        // Check if circuit is registered
+        let circuit_info: Option<CircuitInfo> = env.storage().instance().get(&circuit_hash);
+        
+        if circuit_info.is_none() {
+            env.events().publish(
+                (soroban_sdk::symbol_short!("circ_err"),),
+                "Circuit not registered"
+            );
+            return false;
+        }
+
+        // Perform standard verification
+        Self::verify(env, proof, public_inputs)
+    }
+    
     fn verify_groth16_proof(
         env: &Env,
         proof: &Bytes,
@@ -162,14 +222,14 @@ impl NoirVerifier {
     }
 
     pub fn version(_env: Env) -> u32 {
-        2
+        3
     }
     pub fn info(env: Env) -> (u32, bool) {
         env.events().publish(
             (soroban_sdk::symbol_short!("info"),),
-            "BN254 Groth16 Verifier - Structural Validation Mode"
+            "BN254 Groth16 Verifier v3 - Circuit Registry + Structural Validation"
         );
-        (2, false) 
+        (3, false) 
     }
 }
 
@@ -269,6 +329,61 @@ mod test {
         let client = NoirVerifierClient::new(&env, &contract_id);
 
         let version = client.version();
-        assert_eq!(version, 2);
+        assert_eq!(version, 3);
+    }
+
+    #[test]
+    fn test_register_and_verify_with_circuit() {
+        let env = Env::default();
+        let contract_id = env.register_contract(None, NoirVerifier);
+        let client = NoirVerifierClient::new(&env, &contract_id);
+
+        // Register a circuit
+        let circuit_hash = BytesN::from_array(&env, &[1u8; 32]);
+        let name = soroban_sdk::symbol_short!("zkporr");
+        client.register_circuit(&circuit_hash, &name, &1);
+
+        // Verify it was registered
+        let info = client.get_circuit(&circuit_hash);
+        assert!(info.is_some());
+        assert_eq!(info.unwrap().version, 1);
+
+        // Create a valid proof
+        let mut proof_data = [0u8; 256];
+        for i in 0..256 {
+            proof_data[i] = ((i * 7 + 13) % 256) as u8;
+        }
+        let proof = Bytes::from_array(&env, &proof_data);
+        
+        let commitment = BytesN::from_array(&env, &[2u8; 32]);
+        let total_sum = BytesN::from_array(&env, &[4u8; 32]);
+        let public_inputs = vec![&env, commitment, total_sum];
+
+        // Verify with circuit hash
+        let result = client.verify_with_circuit(&proof, &public_inputs, &circuit_hash);
+        assert!(result);
+    }
+
+    #[test]
+    fn test_verify_with_unregistered_circuit() {
+        let env = Env::default();
+        let contract_id = env.register_contract(None, NoirVerifier);
+        let client = NoirVerifierClient::new(&env, &contract_id);
+
+        let circuit_hash = BytesN::from_array(&env, &[99u8; 32]);
+        
+        let mut proof_data = [0u8; 256];
+        for i in 0..256 {
+            proof_data[i] = ((i * 7 + 13) % 256) as u8;
+        }
+        let proof = Bytes::from_array(&env, &proof_data);
+        
+        let commitment = BytesN::from_array(&env, &[2u8; 32]);
+        let total_sum = BytesN::from_array(&env, &[4u8; 32]);
+        let public_inputs = vec![&env, commitment, total_sum];
+
+        // Should fail because circuit is not registered
+        let result = client.verify_with_circuit(&proof, &public_inputs, &circuit_hash);
+        assert!(!result);
     }
 }
