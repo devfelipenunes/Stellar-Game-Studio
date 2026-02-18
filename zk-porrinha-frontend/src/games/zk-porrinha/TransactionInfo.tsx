@@ -49,7 +49,7 @@ export function TransactionInfo({
           <div className="flex items-center justify-between">
             <span className="text-sm text-gray-600 dark:text-gray-400">Bet Amount:</span>
             <span className="text-sm font-semibold text-gray-900 dark:text-gray-100">
-              {(Number(betAmount) / 10_000_000).toFixed(1)} XLM
+              {(Number(betAmount) / 10_000_000).toFixed(2)} XLM
             </span>
           </div>
         )}
@@ -59,7 +59,7 @@ export function TransactionInfo({
           <div className="flex items-center justify-between">
             <span className="text-sm text-gray-600 dark:text-gray-400">Prize Pool:</span>
             <span className="text-sm font-semibold text-purple-600 dark:text-purple-400">
-              {(Number(betAmount) * 2 / 10_000_000).toFixed(1)} XLM
+              {(Number(betAmount) * 2 / 10_000_000).toFixed(2)} XLM
             </span>
           </div>
         )}
@@ -82,7 +82,7 @@ export function TransactionInfo({
           <div className="flex items-center justify-between">
             <span className="text-sm text-gray-600 dark:text-gray-400">Prize Won:</span>
             <span className="text-lg font-bold text-green-600 dark:text-green-400">
-              💰 {(Number(winAmount) / 10_000_000).toFixed(1)} XLM
+              💰 {(Number(winAmount) / 10_000_000).toFixed(2)} XLM
             </span>
           </div>
         )}

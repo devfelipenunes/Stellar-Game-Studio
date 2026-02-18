@@ -1,23 +1,26 @@
-import { Noir } from '@noir-lang/noir_js';
-import { BarretenbergBackend } from '@noir-lang/backend_barretenberg';
+import { Barretenberg, Fr } from '@aztec/bb.js';
 import { Buffer } from 'buffer';
-import circuit from '../../../../circuits/zk-porrinha-hasher/target/zk_porrinha_hasher.json';
 
-let noir: Noir | null = null;
-let backend: BarretenbergBackend | null = null;
+// Singleton — inicializado uma vez e reutilizado
+let bbInstance: Barretenberg | null = null;
 
-async function initHasher() {
-  if (!noir || !backend) {
-    backend = new BarretenbergBackend(circuit as any);
-    noir = new Noir(circuit as any);
+async function getBB(): Promise<Barretenberg> {
+  if (!bbInstance) {
+    bbInstance = await Barretenberg.new({ threads: 1 });
   }
-  return { noir, backend };
+  return bbInstance;
 }
 
 /**
- * Compute Poseidon2 commitment using Noir circuit (100% compatible)
- * Commitment = Poseidon2(hand, parity_guess, exact_sum_guess, salt)
- * This binds ALL game decisions inside the ZK proof.
+ * Compute Poseidon2 commitment using @aztec/bb.js directly (no second circuit).
+ *
+ * Computes poseidon2_permutation([hand, parity, exact, salt])[0]
+ * — mathematically identical to the assertion inside the main Noir circuit:
+ *   let commitment = poseidon2_permutation([hand, parity, exact, salt], 4)[0];
+ *   assert(commitment == h);
+ *
+ * Using bb.js natively is ~100x faster than loading + executing a second Noir circuit,
+ * and removes the need for the zk-porrinha-hasher circuit entirely.
  */
 export async function computeNoirCommitment(
   hand: number,
@@ -25,52 +28,35 @@ export async function computeNoirCommitment(
   exact: number,
   saltHex: string
 ): Promise<Buffer> {
-  const { noir } = await initHasher();
-  
-  // Format salt (remove 0x if present)
+  const bb = await getBB();
+
+  // Normalize salt — strip 0x if present, convert to bigint
   const cleanSalt = saltHex.startsWith('0x') ? saltHex.slice(2) : saltHex;
-  const saltWithPrefix = '0x' + cleanSalt;
-  
-  // Execute the hasher circuit with 4-argument Poseidon2
-  const inputs = {
-    hand: hand.toString(),
-    parity_guess: parity.toString(),
-    exact_sum_guess: exact.toString(),
-    salt: saltWithPrefix,
-  };
-  
-  console.log('[NoirCommitment] Computing with Noir hasher:', {
-    hand,
-    parity,
-    exact,
-    salt: cleanSalt.substring(0, 20) + '...',
-  });
-  
-  const { returnValue } = await noir.execute(inputs);
-  
-  // returnValue is the commitment (Field)
-  const commitmentStr = String(returnValue);
-  let commitmentHex: string;
-  
-  if (commitmentStr.startsWith('0x')) {
-    commitmentHex = commitmentStr.slice(2);
-  } else {
-    // Convert BigInt to hex
-    const commitmentBigInt = BigInt(commitmentStr);
-    commitmentHex = commitmentBigInt.toString(16);
-  }
-  
-  // Pad to 32 bytes (64 hex chars)
-  commitmentHex = commitmentHex.padStart(64, '0');
-  
-  console.log('[NoirCommitment] Computed:', commitmentHex);
-  
-  return Buffer.from(commitmentHex, 'hex');
+  const saltBigInt = BigInt('0x' + cleanSalt);
+
+  const inputs: Fr[] = [
+    new Fr(BigInt(hand)),
+    new Fr(BigInt(parity)),
+    new Fr(BigInt(exact)),
+    new Fr(saltBigInt),
+  ];
+
+  console.log('[Poseidon2] Computing commitment via bb.js:', { hand, parity, exact, salt: cleanSalt.substring(0, 20) + '...' });
+
+  // poseidon2Permutation returns the full permuted state [s0, s1, s2, s3]
+  // The circuit uses index [0] — same as here.
+  const permuted = await bb.poseidon2Permutation(inputs);
+  const result = permuted[0];
+
+  // toBuffer() returns a big-endian 32-byte Uint8Array
+  const commitmentBuf = Buffer.from(result.toBuffer());
+
+  console.log('[Poseidon2] Commitment:', commitmentBuf.toString('hex'));
+
+  return commitmentBuf;
 }
 
-/**
- * Alias for compatibility
- */
+/** Alias used in resolveWithProof (zkPorrinhaService.ts) */
 export async function computePoseidon2Commitment(
   hand: number,
   parity: number,
@@ -80,6 +66,7 @@ export async function computePoseidon2Commitment(
   return computeNoirCommitment(hand, parity, exact, saltHex);
 }
 
+/** Alias used in commitHandWithProof (zkPorrinhaService.ts) */
 export async function computeCommitment(
   hand: number,
   parity: number,
@@ -89,9 +76,7 @@ export async function computeCommitment(
   return computeNoirCommitment(hand, parity, exact, saltHex);
 }
 
-/**
- * Convert commitment Buffer to hex string
- */
+/** Convert commitment Buffer to hex string */
 export function commitmentToHex(commitment: Buffer): string {
   return commitment.toString('hex');
 }

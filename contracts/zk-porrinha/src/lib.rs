@@ -7,6 +7,8 @@ use soroban_sdk::{
 
 // ~30 days in ledgers (5 s avg -> 17280 ledgers/day x 30)
 pub const TTL_LEDGERS: u32 = 518_400;
+// Instance storage TTL: same 30 days
+pub const INSTANCE_TTL: u32 = 518_400;
 
 #[contracterror]
 #[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
@@ -109,6 +111,7 @@ impl ZkPorrinhaContract {
     // ── CREATE ROOM ──────────────────────────────────────────────────────────
     pub fn create_room(env: Env, player: Address, bet_amount: i128) -> Result<u64, Error> {
         player.require_auth();
+        Self::bump_instance(&env);
         if bet_amount <= 0 {
             return Err(Error::InvalidBet);
         }
@@ -151,6 +154,7 @@ impl ZkPorrinhaContract {
     // ── JOIN ROOM ────────────────────────────────────────────────────────────
     pub fn join_room(env: Env, room_id: u64, player: Address) -> Result<(), Error> {
         player.require_auth();
+        Self::bump_instance(&env);
         let mut room = Self::load_room(&env, room_id)?;
 
         if room.status != RoomStatus::Lobby || room.has_player2 {
@@ -235,6 +239,7 @@ impl ZkPorrinhaContract {
         total_sum: u32,
         nullifier: BytesN<32>,
     ) -> Result<(), Error> {
+        Self::bump_instance(&env);
         let mut room = Self::load_room(&env, room_id)?;
 
         if room.status != RoomStatus::Commit
@@ -345,6 +350,7 @@ impl ZkPorrinhaContract {
 
     /// Returns the accumulated global jackpot (i128 stroops).
     pub fn get_jackpot(env: Env) -> i128 {
+        Self::bump_instance(&env);
         env.storage().instance().get(&DataKey::GlobalJackpot).unwrap_or(0)
     }
 
@@ -387,6 +393,14 @@ impl ZkPorrinhaContract {
     }
     fn get_game_hub(env: &Env) -> Result<Address, Error> {
         env.storage().instance().get(&DataKey::GameHub).ok_or(Error::GameHubNotSet)
+    }
+
+    /// Extend instance storage TTL on every invocation so GlobalJackpot
+    /// and other instance keys never expire between rounds.
+    fn bump_instance(env: &Env) {
+        env.storage()
+            .instance()
+            .extend_ttl(INSTANCE_TTL, INSTANCE_TTL);
     }
 }
 

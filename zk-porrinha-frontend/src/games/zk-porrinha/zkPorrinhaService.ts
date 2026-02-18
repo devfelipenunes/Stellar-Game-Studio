@@ -3,7 +3,7 @@ import { config } from "@/config";
 import { NETWORK_PASSPHRASE, RPC_URL } from "@/utils/constants";
 import { contract } from "@stellar/stellar-sdk";
 import { generateRealProof } from "./realProver";
-import { computeCommitment, commitmentToHex } from './poseidonNoir'; // USE NOIR HASHER
+import { computeCommitment, commitmentToHex } from './poseidonNoir'; // uses @aztec/bb.js poseidon2Permutation directly
 import { saveSecret } from './secrets';
 import { verifyProofOnChain } from './verifier';
 import { localGameState, type LocalHand } from './localGameState';

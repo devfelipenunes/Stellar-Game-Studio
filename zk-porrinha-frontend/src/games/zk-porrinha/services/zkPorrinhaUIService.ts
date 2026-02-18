@@ -128,7 +128,7 @@ export function determineRoomPhase(room: any): 'lobby' | 'commit' | 'settled' {
 }
 
 export function formatXLM(stroops: bigint | number): string {
-  return (Number(stroops) / 10000000).toFixed(1);
+  return (Number(stroops) / 10000000).toFixed(2);
 }
 
 export function startNewGameState() {
