@@ -124,6 +124,12 @@ export interface RealProverInput {
   // Commitments (public) as hex or 32-byte buffers
   h1: string | Buffer;
   h2: string | Buffer;
+  // Parity guesses (public) — 0=Even, 1=Odd
+  parity1: number;
+  parity2: number;
+  // Exact sum guesses (public)
+  exact1: number;
+  exact2: number;
 }
 
 export interface RealProverOutput {
@@ -135,7 +141,7 @@ export interface RealProverOutput {
  * Generate a real ZK proof using Noir + Barretenberg
  */
 export async function generateRealProof(input: RealProverInput): Promise<RealProverOutput> {
-  const { hand1, salt1Hex, hand2, salt2Hex, h1, h2 } = input;
+  const { hand1, salt1Hex, hand2, salt2Hex, h1, h2, parity1, parity2, exact1, exact2 } = input;
   // Basic validation
   if (hand1 < 0 || hand1 > 3 || hand2 < 0 || hand2 > 3) throw new Error('Hand values must be between 0 and 3');
 
@@ -161,6 +167,10 @@ export async function generateRealProof(input: RealProverInput): Promise<RealPro
     salt2: formatSalt(salt2Hex),
     h1: typeof h1 === 'string' ? h1 : '0x' + Buffer.from(h1 as Buffer).toString('hex'),
     h2: typeof h2 === 'string' ? h2 : '0x' + Buffer.from(h2 as Buffer).toString('hex'),
+    parity1: (parity1 ?? 0).toString(),
+    parity2: (parity2 ?? 0).toString(),
+    exact1: (exact1 ?? 0).toString(),
+    exact2: (exact2 ?? 0).toString(),
   };
 
   console.log('[NoirProver] Circuit inputs:', {
@@ -170,6 +180,10 @@ export async function generateRealProof(input: RealProverInput): Promise<RealPro
     salt2: circuitInputs.salt2.substring(0, 20) + '...',
     h1: circuitInputs.h1.substring(0, 20) + '...',
     h2: circuitInputs.h2.substring(0, 20) + '...',
+    parity1: circuitInputs.parity1,
+    parity2: circuitInputs.parity2,
+    exact1: circuitInputs.exact1,
+    exact2: circuitInputs.exact2,
   });
 
   console.log('[NoirProver] Executing circuit with provided secrets...');

@@ -34,7 +34,7 @@ if (typeof window !== "undefined") {
 export const networks = {
   testnet: {
     networkPassphrase: "Test SDF Network ; September 2015",
-    contractId: "CAQ6IUMYEWY7UVYY7KTKSW5FBAHJXFOZGWZ6MSNQLDNTW232PMWV4K7F",
+    contractId: "CAOQS36WP4Y2P3GT7R5KHAU46TNNYSER47CDFJB6LKYGEJNQHEOFM7QW",
   }
 } as const
 
@@ -48,7 +48,8 @@ export const Errors = {
   7: {message:"InvalidBet"},
   8: {message:"XlmTokenNotSet"},
   9: {message:"VerifierNotSet"},
-  10: {message:"GameHubNotSet"}
+  10: {message:"GameHubNotSet"},
+  11: {message:"SelfPlay"}
 }
 
 export type RoomStatus = {tag: "Lobby", values: void} | {tag: "Commit", values: void} | {tag: "Settled", values: void};
@@ -105,6 +106,18 @@ export interface Client {
    */
   get_room_count: (options?: MethodOptions) => Promise<AssembledTransaction<u64>>
 
+  /**
+   * Construct and simulate a get_jackpot transaction. Returns an `AssembledTransaction` object which will have a `result` field containing the result of the simulation. If this transaction changes contract state, you will need to call `signAndSend()` on the returned object.
+   * Returns the accumulated global jackpot (i128 stroops).
+   */
+  get_jackpot: (options?: MethodOptions) => Promise<AssembledTransaction<i128>>
+
+  /**
+   * Construct and simulate a get_room_pot transaction. Returns an `AssembledTransaction` object which will have a `result` field containing the result of the simulation. If this transaction changes contract state, you will need to call `signAndSend()` on the returned object.
+   * Returns the total pot locked in a room (bet x number of players).
+   */
+  get_room_pot: ({room_id}: {room_id: u64}, options?: MethodOptions) => Promise<AssembledTransaction<Result<i128>>>
+
 }
 export class Client extends ContractClient {
   static async deploy<T = Client>(
@@ -125,7 +138,7 @@ export class Client extends ContractClient {
   }
   constructor(public readonly options: ContractClientOptions) {
     super(
-      new ContractSpec([ "AAAABAAAAAAAAAAAAAAABUVycm9yAAAAAAAACgAAAAAAAAAMUm9vbU5vdEZvdW5kAAAAAQAAAAAAAAAJTm90UGxheWVyAAAAAAAAAgAAAAAAAAAMSW52YWxpZFBoYXNlAAAAAwAAAAAAAAAQQWxyZWFkeUNvbW1pdHRlZAAAAAQAAAAAAAAADEludmFsaWRQcm9vZgAAAAUAAAAAAAAADU51bGxpZmllclVzZWQAAAAAAAAGAAAAAAAAAApJbnZhbGlkQmV0AAAAAAAHAAAAAAAAAA5YbG1Ub2tlbk5vdFNldAAAAAAACAAAAAAAAAAOVmVyaWZpZXJOb3RTZXQAAAAAAAkAAAAAAAAADUdhbWVIdWJOb3RTZXQAAAAAAAAK",
+      new ContractSpec([ "AAAABAAAAAAAAAAAAAAABUVycm9yAAAAAAAACwAAAAAAAAAMUm9vbU5vdEZvdW5kAAAAAQAAAAAAAAAJTm90UGxheWVyAAAAAAAAAgAAAAAAAAAMSW52YWxpZFBoYXNlAAAAAwAAAAAAAAAQQWxyZWFkeUNvbW1pdHRlZAAAAAQAAAAAAAAADEludmFsaWRQcm9vZgAAAAUAAAAAAAAADU51bGxpZmllclVzZWQAAAAAAAAGAAAAAAAAAApJbnZhbGlkQmV0AAAAAAAHAAAAAAAAAA5YbG1Ub2tlbk5vdFNldAAAAAAACAAAAAAAAAAOVmVyaWZpZXJOb3RTZXQAAAAAAAkAAAAAAAAADUdhbWVIdWJOb3RTZXQAAAAAAAAKAAAAAAAAAAhTZWxmUGxheQAAAAs=",
         "AAAAAgAAAAAAAAAAAAAAClJvb21TdGF0dXMAAAAAAAMAAAAAAAAAAAAAAAVMb2JieQAAAAAAAAAAAAAAAAAABkNvbW1pdAAAAAAAAAAAAAAAAAAHU2V0dGxlZAA=",
         "AAAAAQAAAAAAAAAAAAAAC1BsYXllclN0YXRlAAAAAAUAAAAAAAAAB2FkZHJlc3MAAAAAEwAAAAAAAAAKY29tbWl0bWVudAAAAAAD7gAAACAAAAAAAAAAD2V4YWN0X3N1bV9ndWVzcwAAAAAEAAAAAAAAAA1oYXNfY29tbWl0dGVkAAAAAAAAAQAAAAAAAAAMcGFyaXR5X2d1ZXNzAAAABA==",
         "AAAAAQAAAAAAAAAAAAAABFJvb20AAAAIAAAAAAAAAApiZXRfYW1vdW50AAAAAAALAAAAAAAAAAtoYXNfcGxheWVyMgAAAAABAAAAAAAAAAdwbGF5ZXIxAAAAB9AAAAALUGxheWVyU3RhdGUAAAAAAAAAAAdwbGF5ZXIyAAAAB9AAAAALUGxheWVyU3RhdGUAAAAAAAAAAApzZXNzaW9uX2lkAAAAAAAEAAAAAAAAAAZzdGF0dXMAAAAAB9AAAAAKUm9vbVN0YXR1cwAAAAAAAAAAAAl0b3RhbF9zdW0AAAAAAAPoAAAABAAAAAAAAAAGd2lubmVyAAAAAAPoAAAAEw==",
@@ -135,7 +148,9 @@ export class Client extends ContractClient {
         "AAAAAAAAAAAAAAAGY29tbWl0AAAAAAAFAAAAAAAAAAdyb29tX2lkAAAAAAYAAAAAAAAABnBsYXllcgAAAAAAEwAAAAAAAAAKY29tbWl0bWVudAAAAAAD7gAAACAAAAAAAAAABnBhcml0eQAAAAAABAAAAAAAAAALZXhhY3RfZ3Vlc3MAAAAABAAAAAEAAAPpAAAAAgAAAAM=",
         "AAAAAAAAAAAAAAAHcmVzb2x2ZQAAAAAEAAAAAAAAAAdyb29tX2lkAAAAAAYAAAAAAAAABXByb29mAAAAAAAADgAAAAAAAAAJdG90YWxfc3VtAAAAAAAABAAAAAAAAAAJbnVsbGlmaWVyAAAAAAAD7gAAACAAAAABAAAD6QAAAAIAAAAD",
         "AAAAAAAAAAAAAAAIZ2V0X3Jvb20AAAABAAAAAAAAAAdyb29tX2lkAAAAAAYAAAABAAAD6QAAB9AAAAAEUm9vbQAAAAM=",
-        "AAAAAAAAAAAAAAAOZ2V0X3Jvb21fY291bnQAAAAAAAAAAAABAAAABg==" ]),
+        "AAAAAAAAAAAAAAAOZ2V0X3Jvb21fY291bnQAAAAAAAAAAAABAAAABg==",
+        "AAAAAAAAADZSZXR1cm5zIHRoZSBhY2N1bXVsYXRlZCBnbG9iYWwgamFja3BvdCAoaTEyOCBzdHJvb3BzKS4AAAAAAAtnZXRfamFja3BvdAAAAAAAAAAAAQAAAAs=",
+        "AAAAAAAAAEFSZXR1cm5zIHRoZSB0b3RhbCBwb3QgbG9ja2VkIGluIGEgcm9vbSAoYmV0IHggbnVtYmVyIG9mIHBsYXllcnMpLgAAAAAAAAxnZXRfcm9vbV9wb3QAAAABAAAAAAAAAAdyb29tX2lkAAAAAAYAAAABAAAD6QAAAAsAAAAD" ]),
       options
     )
   }
@@ -145,6 +160,8 @@ export class Client extends ContractClient {
         commit: this.txFromJSON<Result<void>>,
         resolve: this.txFromJSON<Result<void>>,
         get_room: this.txFromJSON<Result<Room>>,
-        get_room_count: this.txFromJSON<u64>
+        get_room_count: this.txFromJSON<u64>,
+        get_jackpot: this.txFromJSON<i128>,
+        get_room_pot: this.txFromJSON<Result<i128>>
   }
 }

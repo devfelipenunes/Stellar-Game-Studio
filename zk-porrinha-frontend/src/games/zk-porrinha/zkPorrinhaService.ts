@@ -31,11 +31,16 @@ export class ZkPorrinhaService {
 
   constructor(contractId: string) {
     this.contractId = contractId;
+    console.log(`[ZkPorrinhaService] Using contract: ${contractId}`);
     this.baseClient = new ZkPorrinhaClient({
       contractId: this.contractId,
       networkPassphrase: NETWORK_PASSPHRASE,
       rpcUrl: RPC_URL,
     });
+  }
+
+  getContractId(): string {
+    return this.contractId;
   }
 
   private createSigningClient(
@@ -78,6 +83,43 @@ export class ZkPorrinhaService {
     } catch (e) {
       console.error("[ZkPorrinhaService] getRoomCount failed", e);
       return 0n;
+    }
+  }
+  // Derive room pot from contract binding (get_room_pot) or fallback locally.
+  async getRoomPot(roomId: bigint): Promise<bigint | null> {
+    try {
+      const tx = await this.baseClient.get_room_pot({ room_id: roomId });
+      const res = await tx.simulate();
+      if (res.result && typeof (res.result as any).isOk === 'function') {
+        if ((res.result as any).isOk()) return (res.result as any).unwrap() as bigint;
+        return null;
+      }
+      return res.result as unknown as bigint;
+    } catch (e) {
+      // Fallback: derive locally from getRoom
+      try {
+        const room = await this.getRoom(roomId);
+        if (!room) return null;
+        const players = room.has_player2 ? 2n : 1n;
+        return BigInt(room.bet_amount) * players;
+      } catch {
+        console.error('[ZkPorrinhaService] getRoomPot failed', e);
+        return null;
+      }
+    }
+  }
+
+  /**
+   * Returns the global accumulated jackpot from the contract (i128 stroops).
+   */
+  async getJackpot(): Promise<bigint | null> {
+    try {
+      const tx = await this.baseClient.get_jackpot();
+      const res = await tx.simulate();
+      return res.result as unknown as bigint;
+    } catch (e) {
+      console.error('[ZkPorrinhaService] getJackpot failed', e);
+      return null;
     }
   }
 
@@ -164,7 +206,8 @@ export class ZkPorrinhaService {
 
       const { generateSalt } = await import('./realProver');
       const saltHex = generateSalt();
-      const commitmentBuf = await computeCommitment(hand, saltHex);
+      // Commitment binds ALL game decisions: Poseidon2(hand, parity, exact, salt)
+      const commitmentBuf = await computeCommitment(hand, parity, totalGuess, saltHex);
       const commitmentHex = commitmentToHex(commitmentBuf);
 
       saveSecret(roomId, playerAddress, { hand, saltHex });
@@ -215,8 +258,16 @@ export class ZkPorrinhaService {
       if (!room) throw new Error('Room not found');
 
       const { computePoseidon2Commitment } = await import('./poseidonNoir');
-      const h1Buf = await computePoseidon2Commitment(mySecret.hand, mySecret.saltHex);
-      const h2Buf = await computePoseidon2Commitment(otherSecret.hand, otherSecret.saltHex);
+
+      // Read parity/exact guesses from the on-chain room state
+      const parity1 = Number(room.player1.parity_guess);
+      const exact1 = Number(room.player1.exact_sum_guess);
+      const parity2 = Number(room.player2.parity_guess);
+      const exact2 = Number(room.player2.exact_sum_guess);
+
+      // Recompute commitments using the full 4-argument Poseidon2(hand, parity, exact, salt)
+      const h1Buf = await computePoseidon2Commitment(mySecret.hand, parity1, exact1, mySecret.saltHex);
+      const h2Buf = await computePoseidon2Commitment(otherSecret.hand, parity2, exact2, otherSecret.saltHex);
       
       console.log('[DEBUG] Commitments recalculated locally (not from contract)');
 
@@ -227,6 +278,10 @@ export class ZkPorrinhaService {
         salt2Hex: otherSecret.saltHex,
         h1: h1Buf,
         h2: h2Buf,
+        parity1,
+        parity2,
+        exact1,
+        exact2,
       };
 
       console.log('🔐 Generating ZK proof...');
@@ -237,6 +292,7 @@ export class ZkPorrinhaService {
         salt2: proverInput.salt2Hex.substring(0, 20) + '...',
         h1: Buffer.from(proverInput.h1).toString('hex'),
         h2: Buffer.from(proverInput.h2).toString('hex'),
+        parity1, parity2, exact1, exact2,
       });
       
       const { proofBytes, totalSum } = await generateRealProof(proverInput);
@@ -347,11 +403,11 @@ export class ZkPorrinhaService {
           console.log('💵 Total pot:', (BigInt(resolvedRoom.bet_amount) * 2n).toString(), 'stroops');
           
           console.log('📊 Player 1 guesses:', {
-            parity: resolvedRoom.player1.parity_guess === 0 ? 'Par' : 'Ímpar',
+            parity: resolvedRoom.player1.parity_guess === 0 ? 'Even' : 'Odd',
             exact: resolvedRoom.player1.exact_sum_guess,
           });
           console.log('📊 Player 2 guesses:', {
-            parity: resolvedRoom.player2.parity_guess === 0 ? 'Par' : 'Ímpar',
+            parity: resolvedRoom.player2.parity_guess === 0 ? 'Even' : 'Odd',
             exact: resolvedRoom.player2.exact_sum_guess,
           });
         }
