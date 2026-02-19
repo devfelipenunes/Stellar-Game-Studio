@@ -108,6 +108,14 @@ impl ZkPorrinhaContract {
         s.set(&DataKey::GlobalJackpot, &0i128);
     }
 
+    // ── ADMIN: UPDATE VERIFIER ───────────────────────────────────────────────
+    pub fn set_verifier(env: Env, new_verifier: Address) {
+        let s = env.storage().instance();
+        let admin: Address = s.get(&DataKey::Admin).unwrap();
+        admin.require_auth();
+        s.set(&DataKey::Verifier, &new_verifier);
+    }
+
     // ── CREATE ROOM ──────────────────────────────────────────────────────────
     pub fn create_room(env: Env, player: Address, bet_amount: i128) -> Result<u64, Error> {
         player.require_auth();
