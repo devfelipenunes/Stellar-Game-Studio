@@ -5,9 +5,15 @@ use soroban_sdk::{
     Address, Bytes, BytesN, Env, Vec,
 };
 
-// ~30 days in ledgers (5 s avg -> 17280 ledgers/day x 30)
+const VK_HASH: [u8; 32] = [
+    0xac, 0x14, 0x7c, 0xd3, 0x2a, 0x56, 0x81, 0xd6,
+    0xd2, 0x94, 0x87, 0x08, 0x8e, 0x52, 0x50, 0xb6,
+    0x16, 0xe9, 0xec, 0x4f, 0x42, 0xea, 0x09, 0x5e,
+    0xb0, 0x7a, 0x68, 0xb8, 0x96, 0x40, 0xa6, 0xb5,
+];
+
+
 pub const TTL_LEDGERS: u32 = 518_400;
-// Instance storage TTL: same 30 days
 pub const INSTANCE_TTL: u32 = 518_400;
 
 #[contracterror]
@@ -43,7 +49,7 @@ pub trait GameHub {
 
 #[contractclient(name = "VerifierClient")]
 pub trait VerifierInterface {
-    fn verify(env: Env, proof: Bytes, public_inputs: Vec<BytesN<32>>) -> bool;
+    fn verify(env: Env, proof: Bytes, public_inputs: Vec<BytesN<32>>, vk_hash: BytesN<32>) -> bool;
 }
 
 #[contracttype]
@@ -108,7 +114,6 @@ impl ZkPorrinhaContract {
         s.set(&DataKey::GlobalJackpot, &0i128);
     }
 
-    // ── ADMIN: UPDATE VERIFIER ───────────────────────────────────────────────
     pub fn set_verifier(env: Env, new_verifier: Address) {
         let s = env.storage().instance();
         let admin: Address = s.get(&DataKey::Admin).unwrap();
@@ -116,7 +121,6 @@ impl ZkPorrinhaContract {
         s.set(&DataKey::Verifier, &new_verifier);
     }
 
-    // ── CREATE ROOM ──────────────────────────────────────────────────────────
     pub fn create_room(env: Env, player: Address, bet_amount: i128) -> Result<u64, Error> {
         player.require_auth();
         Self::bump_instance(&env);
@@ -159,7 +163,6 @@ impl ZkPorrinhaContract {
         Ok(counter)
     }
 
-    // ── JOIN ROOM ────────────────────────────────────────────────────────────
     pub fn join_room(env: Env, room_id: u64, player: Address) -> Result<(), Error> {
         player.require_auth();
         Self::bump_instance(&env);
@@ -199,7 +202,6 @@ impl ZkPorrinhaContract {
         Ok(())
     }
 
-    // ── COMMIT ───────────────────────────────────────────────────────────────
     pub fn commit(
         env: Env,
         room_id: u64,
@@ -239,7 +241,6 @@ impl ZkPorrinhaContract {
         Ok(())
     }
 
-    // ── RESOLVE ──────────────────────────────────────────────────────────────
     pub fn resolve(
         env: Env,
         room_id: u64,
@@ -257,15 +258,11 @@ impl ZkPorrinhaContract {
             return Err(Error::InvalidPhase);
         }
 
-        // Replay-attack guard
-        let nullifier_key = DataKey::Nullifier(nullifier.clone());
+         let nullifier_key = DataKey::Nullifier(nullifier.clone());
         if env.storage().instance().has(&nullifier_key) {
             return Err(Error::NullifierUsed);
         }
 
-        // ZK verification
-        // Public inputs order must match circuit:
-        // h1, h2, parity1, parity2, exact1, exact2, total_sum, nullifier
         let verifier = VerifierClient::new(&env, &Self::get_verifier(&env)?);
         let mut public_inputs: Vec<BytesN<32>> = Vec::new(&env);
         public_inputs.push_back(room.player1.commitment.clone());
@@ -275,15 +272,14 @@ impl ZkPorrinhaContract {
         public_inputs.push_back(Self::u32_to_bytes32(&env, room.player1.exact_sum_guess));
         public_inputs.push_back(Self::u32_to_bytes32(&env, room.player2.exact_sum_guess));
         public_inputs.push_back(Self::u32_to_bytes32(&env, total_sum));
-        public_inputs.push_back(nullifier.clone());
 
-        if !verifier.verify(&proof, &public_inputs) {
+        let vk_hash_bytes = BytesN::from_array(&env, &VK_HASH);
+        if !verifier.verify(&proof, &public_inputs, &vk_hash_bytes) {
             return Err(Error::InvalidProof);
         }
 
         env.storage().instance().set(&nullifier_key, &true);
 
-        // ── Payout: 80% parity pool, 20% jackpot accumulator ─────────────────
         let total_pot = room.bet_amount * 2;
         let parity_pool = (total_pot * 80) / 100;
         let jackpot_contribution = total_pot - parity_pool; // 20%
@@ -294,7 +290,6 @@ impl ZkPorrinhaContract {
 
         let token = token::Client::new(&env, &Self::get_xlm_token(&env)?);
 
-        // 80% -> parity winner(s)
         if p1_wins_parity && !p2_wins_parity {
             token.transfer(&env.current_contract_address(), &room.player1.address, &parity_pool);
         } else if p2_wins_parity && !p1_wins_parity {
@@ -305,7 +300,6 @@ impl ZkPorrinhaContract {
             token.transfer(&env.current_contract_address(), &room.player2.address, &half);
         }
 
-        // 20% -> jackpot or winner if exact guess hit
         let mut jackpot: i128 = env.storage().instance().get(&DataKey::GlobalJackpot).unwrap_or(0);
         let p1_hits_exact = room.player1.exact_sum_guess == total_sum;
         let p2_hits_exact = room.player2.exact_sum_guess == total_sum;
@@ -346,8 +340,6 @@ impl ZkPorrinhaContract {
         Ok(())
     }
 
-    // ── READ-ONLY ─────────────────────────────────────────────────────────────
-
     pub fn get_room(env: Env, room_id: u64) -> Result<Room, Error> {
         Self::load_room(&env, room_id)
     }
@@ -356,20 +348,16 @@ impl ZkPorrinhaContract {
         env.storage().instance().get(&DataKey::RoomCounter).unwrap_or(0)
     }
 
-    /// Returns the accumulated global jackpot (i128 stroops).
     pub fn get_jackpot(env: Env) -> i128 {
         Self::bump_instance(&env);
         env.storage().instance().get(&DataKey::GlobalJackpot).unwrap_or(0)
     }
 
-    /// Returns the total pot locked in a room (bet x number of players).
     pub fn get_room_pot(env: Env, room_id: u64) -> Result<i128, Error> {
         let room = Self::load_room(&env, room_id)?;
         let players: i128 = if room.has_player2 { 2 } else { 1 };
         Ok(room.bet_amount * players)
     }
-
-    // ── HELPERS ───────────────────────────────────────────────────────────────
 
     fn u32_to_bytes32(env: &Env, val: u32) -> BytesN<32> {
         let mut b = [0u8; 32];
@@ -403,8 +391,6 @@ impl ZkPorrinhaContract {
         env.storage().instance().get(&DataKey::GameHub).ok_or(Error::GameHubNotSet)
     }
 
-    /// Extend instance storage TTL on every invocation so GlobalJackpot
-    /// and other instance keys never expire between rounds.
     fn bump_instance(env: &Env) {
         env.storage()
             .instance()

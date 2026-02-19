@@ -22,7 +22,7 @@ impl MockGameHub {
 pub struct MockVerifier;
 #[contractimpl]
 impl MockVerifier {
-    pub fn verify(_env: Env, proof: Bytes, public_inputs: Vec<BytesN<32>>) -> bool {
+    pub fn verify(_env: Env, proof: Bytes, public_inputs: Vec<BytesN<32>>, _vk_hash: BytesN<32>) -> bool {
         proof.len() > 0 && public_inputs.len() >= 2
     }
 }
@@ -32,7 +32,7 @@ impl MockVerifier {
 pub struct MockVerifierReject;
 #[contractimpl]
 impl MockVerifierReject {
-    pub fn verify(_env: Env, _proof: Bytes, _pi: Vec<BytesN<32>>) -> bool { false }
+    pub fn verify(_env: Env, _proof: Bytes, _pi: Vec<BytesN<32>>, _vk_hash: BytesN<32>) -> bool { false }
 }
 
 /// Silently succeeds token transfers.
