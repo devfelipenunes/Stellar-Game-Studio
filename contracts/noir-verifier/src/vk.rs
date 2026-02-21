@@ -193,4 +193,12 @@ pub const VK_TABLE_TYPE: [u8; 64] = [
     0x10, 0xc8, 0xa3, 0x6c, 0xbb, 0x2f, 0xd9, 0xed, 0x88, 0x75, 0xb5, 0x10, 0x6a, 0x37, 0x16, 0x2a,
     0xc2, 0x93, 0x2f, 0x3b, 0xd1, 0xb6, 0x94, 0x2b, 0x13, 0x25, 0x46, 0xd2, 0x11, 0x0a, 0x63, 0xe2
 ];
+// Raw VK bytes (Barretenberg output). Keep as a static slice so the binary
+// can be included at compile time and used by the verifier. This points to
+// the circuit vk generated in the repo at `circuits/zk-porrinha/target/vk`.
+//
+// Note: include_bytes! expands to a `&'static [u8; N]` which coerces to
+// `&'static [u8]` and can be passed to `Bytes::from_array` through the
+// soroban SDK bindings used in `noir-verifier`.
+pub static VK_BYTES: &'static [u8; 1760] = include_bytes!("../../../circuits/zk-porrinha/target/vk");
 

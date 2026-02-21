@@ -8,10 +8,13 @@ members = [
   "contracts/dice-duel",
   "contracts/zk-porrinha",
   "contracts/noir-verifier",
+  "contracts/ultrahonk_soroban_verifier",
 ]
 
 [workspace.dependencies]
 soroban-sdk = "25.0.2"
+ultrahonk_soroban_verifier = { path = "contracts/ultrahonk_soroban_verifier" }
+
 
 [profile.release]
 opt-level = "z"
