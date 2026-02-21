@@ -64,6 +64,47 @@ contracts/noir-verifier/  ← BN254 proof verification (Soroban native)
 circuits/zk-porrinha/     ← Noir circuit definition
 ```
 
+## 🔁 Regenerating the Verification Key
+
+When you make any changes to the Noir circuit the verification key (`vk`)
+must be rebuilt and the new hash propagated into the on‑chain contracts.
+
+1. Recompile the circuit (usually inside the Docker environment):
+  ```bash
+  cd circuits/zk-porrinha
+  nargo compile
+  bb write_vk -b target/zk_porrinha.json -o target --scheme ultra_honk --oracle_hash keccak
+  ```
+  The resulting binary is placed at `circuits/zk-porrinha/target/vk`.
+
+2. Compute the SHA‑256 of the `vk` file and update the two Rust constants:
+  - `contracts/zk-porrinha/src/lib.rs` → `VK_HASH`
+  - `contracts/noir-verifier/src/lib.rs` → `VK_HASH_EXPECTED`
+
+  Example using `shasum`:
+  ```bash
+  sha256sum circuits/zk-porrinha/target/vk
+  ```
+
+3. Regenerate the Rust binding in `contracts/noir-verifier/src/vk.rs` (the
+  repository includes a helper script to do this if you need it) so that the
+  actual verification key data is re‑embedded.
+
+4. Rebuild and redeploy both `noir-verifier` and `zk-porrinha`:
+  ```bash
+  bun run build noir-verifier zk-porrinha
+  bun run deploy noir-verifier zk-porrinha
+  ```
+
+  The deployment script will automatically compare the local `vk` hash with
+  the on‑chain `vk_hash` to warn you if they diverge.
+
+5. Update the frontend configuration if necessary and run the integration
+  tests (`scripts/test-real-prover.ts`) to exercise the end‑to‑end flow.
+
+Keeping these hashes in sync is critical; a mismatch means proofs generated with
+your circuit will be rejected on-chain even though they are otherwise valid.
+
 ### Game Flow
 
 **Phase 1: Create Room**

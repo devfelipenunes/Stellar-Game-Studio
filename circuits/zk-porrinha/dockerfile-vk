@@ -1,0 +1,26 @@
+FROM ubuntu:24.04
+
+RUN apt-get update && apt-get install -y \
+    curl \
+    bash \
+    git \
+    nodejs \
+    npm \
+    jq \
+    && rm -rf /var/lib/apt/lists/*
+
+# Instala bbup e barretenberg v0.87.0
+RUN curl -L https://raw.githubusercontent.com/AztecProtocol/aztec-packages/refs/heads/next/barretenberg/bbup/install | bash
+
+ENV PATH="/root/.bb:$PATH"
+
+RUN bbup -v 0.87.0
+
+# Instala noirup e nargo 1.0.0-beta.9
+RUN curl -L https://raw.githubusercontent.com/noir-lang/noirup/main/install | bash
+
+ENV PATH="/root/.nargo/bin:$PATH"
+
+RUN noirup -v 1.0.0-beta.9
+
+WORKDIR /circuit

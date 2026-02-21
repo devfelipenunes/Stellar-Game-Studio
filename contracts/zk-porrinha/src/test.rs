@@ -194,6 +194,18 @@ fn test_room_pot_two_players() {
 }
 
 #[test]
+fn test_vk_hash_file_consistency() {
+    use sha2::{Digest, Sha256};
+    let bytes: &[u8] = include_bytes!("../../../circuits/zk-porrinha/target/vk");
+    let mut hasher = Sha256::new();
+    hasher.update(bytes);
+    let result = hasher.finalize();
+    let mut arr = [0u8; 32];
+    arr.copy_from_slice(&result);
+    assert_eq!(arr, crate::VK_HASH, "VK file hash does not match contract constant");
+}
+
+#[test]
 fn test_commit_records_values() {
     let (env, client, p1, p2) = setup();
     let id = client.create_room(&p1, &1_000i128);

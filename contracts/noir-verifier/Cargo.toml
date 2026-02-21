@@ -8,9 +8,11 @@ crate-type = ["cdylib"]
 
 [dependencies]
 soroban-sdk = { workspace = true }
+ultrahonk_soroban_verifier = { workspace = true }
 
 [dev-dependencies]
 soroban-sdk = { workspace = true, features = ["testutils"] }
+sha2 = "0.10"
 
 [profile.release]
 opt-level = "z"

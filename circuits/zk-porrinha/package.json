@@ -7,6 +7,7 @@
     "generate-commitment": "node scripts/generate-commitment.js"
   },
   "dependencies": {
-    "poseidon-lite": "^0.2.0"
+    "circomlibjs": "^0.1.7",
+    "poseidon-lite": "^0.2.1"
   }
 }
